@@ -1,0 +1,31 @@
+networks:
+  traefik:
+    external: true
+  gitea:
+    external: false
+services:
+  gitea:
+    image: gitea/gitea:latest
+    container_name: gitea
+    environment:
+      - USER_UID=1000
+      - USER_GID=1000
+    restart: always
+    networks:
+      - gitea
+      - traefik
+    volumes:
+      - ${GITEA_DATA}:/data
+      - /etc/timezone:/etc/timezone:ro
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/ssl/certs:/etc/ssl/certs:ro
+    ports:
+      #- "3001:3000"
+      - "222:22"
+    extra_hosts:
+      - auth.${DOMAIN}:${DOCKER0_IP:-172.17.0.1}
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.gitea.rule=Host(`gitea.${DOMAIN}`)"
+      - "traefik.http.routers.gitea.service=gitea"
+      - "traefik.http.services.gitea.loadbalancer.server.port=3000"

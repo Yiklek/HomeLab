@@ -1,0 +1,6 @@
+include:
+  - ./default/traefik.yml
+  - ./default/authentik.yml
+  - ./default/adguard.yml
+  - ./default/portainer.yml
+  - ./default/v2raya.yml

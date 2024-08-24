@@ -1,0 +1,20 @@
+services:
+  portainer:
+    image: portainer/portainer-ce:2.20.3
+    command: --log-level=DEBUG
+    restart: unless-stopped
+    ports:
+      - 8000:8000
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${DATA_BASE}/portainer/config:/data
+    depends_on:
+      - traefik
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.portainer.rule=Host(`portainer.${DOMAIN}`)"
+      - "traefik.http.routers.portainer.service=portainer"
+      - "traefik.http.services.portainer.loadbalancer.server.port=9000"
+    networks:
+      - traefik
+      - authentik
