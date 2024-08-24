@@ -1,0 +1,27 @@
+services:
+  adguard:
+    image: adguard/adguardhome
+    restart: unless-stopped
+    ports:
+      - 53:53/tcp
+      - 53:53/udp
+      - 3000:3000
+      - 853:853/udp
+      - 784:784/udp
+      - 8853:8853/udp
+      - 5443:5443/tcp
+      - 5443:5443/udp
+    volumes:
+      - ${DATA_BASE}/adguard/workdir:/opt/adguardhome/work
+      - ${DATA_BASE}/adguard/confdir:/opt/adguardhome/conf
+    depends_on:
+      - traefik
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.adguard.rule=Host(`adguard.${DOMAIN}`)"
+      - "traefik.http.routers.adguard.service=adguard"
+      - "traefik.http.routers.adguard.middlewares=domain-authentik,adguard-auth-header"
+      - "traefik.http.services.adguard.loadbalancer.server.port=3000"
+      - "traefik.http.middlewares.adguard-auth-header.headers.customrequestheaders.Authorization=${ADGUARD_AUTH:-}"
+    networks:
+      - traefik
