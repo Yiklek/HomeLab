@@ -22,7 +22,10 @@ if [ ! -f "${SERVICE}.csr" ]; then
     openssl req -newkey rsa:2048 -noenc -keyout $SERVICE.key -out $SERVICE.csr  -subj=/C=CN/ST=Beijing/L=Beijing/CN=*.${DOMAIN}
 fi
 
-cat > extfile << EOF
+EXTFILE=extfile
+if [ ! -f "${EXTFILE}" ]; then
+
+cat > ${EXTFILE} << EOF
 authorityKeyIdentifier=keyid,issuer
 basicConstraints=CA:FALSE
 keyUsage = digitalSignature, nonRepudiation, keyEncipherment, dataEncipherment
@@ -33,5 +36,6 @@ DNS.1=${DOMAIN}
 DNS.2=*.${DOMAIN}
 EOF
 
+fi
 echo "Signing for $SERVICE"
 openssl x509 -req  -days ${DAYS} -CAcreateserial -in $SERVICE.csr -out $SERVICE.crt -CA "${CA_NAME}.crt" -CAkey "${CA_NAME}.key" -extfile extfile

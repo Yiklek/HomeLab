@@ -108,7 +108,7 @@ services:
     networks:
       - authentik
   authentik-domain-proxy:
-    image: ghcr.io/goauthentik/proxy
+    image: ghcr.io/goauthentik/proxy:${AUTHENTIK_TAG:-2024.6.3}
     # ports:
     #     - 9000:9000
     #     - 9443:9443
@@ -133,6 +133,21 @@ services:
       traefik.http.middlewares.domain-authentik.forwardauth.authResponseHeadersRegex: ^X-authentik-
     networks:
       - traefik
+  authentik-ldap:
+    image: ghcr.io/goauthentik/ldap:${AUTHENTIK_TAG:-2024.6.3}
+    ports:
+      - 389:3389
+    #     - 9443:9443
+    environment:
+      AUTHENTIK_HOST: https://auth.${DOMAIN}/
+      AUTHENTIK_INSECURE: "true"
+      AUTHENTIK_TOKEN: ${AUTHENTIK_LDAP_TOKEN}
+      # Starting with 2021.9, you can optionally set this too
+      # when authentik_host for internal communication doesn't match the public URL
+      # AUTHENTIK_HOST_BROWSER: https://auth.${DOMAIN}/
+      AUTHENTIK_DEBUG: true
+    extra_hosts:
+      - auth.${DOMAIN}:${DOCKER0_IP:-172.17.0.1} # docker0 ip
 networks:
   authentik:
     name: authentik
