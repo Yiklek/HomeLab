@@ -66,7 +66,7 @@ services:
       - "traefik.http.routers.auth.rule=Host(`auth.${DOMAIN}`)"
       - "traefik.http.routers.auth.service=authentik-server"
       - "traefik.http.services.authentik-server.loadbalancer.server.port=9000"
-  worker:
+  authentik-worker:
     image: ${AUTHENTIK_IMAGE:-ghcr.io/goauthentik/server}:${AUTHENTIK_TAG:-2024.6.3}
     restart: unless-stopped
     command: worker
@@ -109,6 +109,7 @@ services:
       - authentik
   authentik-domain-proxy:
     image: ghcr.io/goauthentik/proxy:${AUTHENTIK_TAG:-2024.6.3}
+    restart: unless-stopped
     # ports:
     #     - 9000:9000
     #     - 9443:9443
@@ -120,8 +121,6 @@ services:
       # when authentik_host for internal communication doesn't match the public URL
       # AUTHENTIK_HOST_BROWSER: https://auth.${DOMAIN}/
       # AUTHENTIK_DEBUG: true
-    extra_hosts:
-      - auth.${DOMAIN}:${DOCKER0_IP:-172.17.0.1} # docker0 ip
     labels:
       traefik.enable: true
       traefik.http.routers.domain-authentik.rule: HostRegexp(`^.+\.${DOMAIN}$`) && PathPrefix(`/outpost.goauthentik.io/`)
@@ -132,12 +131,15 @@ services:
       traefik.http.middlewares.domain-authentik.forwardauth.trustForwardHeader: true
       traefik.http.middlewares.domain-authentik.forwardauth.authResponseHeadersRegex: ^X-authentik-
     networks:
-      - traefik
+      - authentik
+    dns:
+      - ${AUTHENTIK_GATEWAY:-${DNS}}
   authentik-ldap:
     image: ghcr.io/goauthentik/ldap:${AUTHENTIK_TAG:-2024.6.3}
+    restart: unless-stopped
     ports:
       - 389:3389
-    #     - 9443:9443
+      - 636:6636
     environment:
       AUTHENTIK_HOST: https://auth.${DOMAIN}/
       AUTHENTIK_INSECURE: "true"
@@ -146,8 +148,10 @@ services:
       # when authentik_host for internal communication doesn't match the public URL
       # AUTHENTIK_HOST_BROWSER: https://auth.${DOMAIN}/
       AUTHENTIK_DEBUG: true
-    extra_hosts:
-      - auth.${DOMAIN}:${DOCKER0_IP:-172.17.0.1} # docker0 ip
+    networks:
+      - authentik
+    dns:
+      - ${AUTHENTIK_GATEWAY:-${DNS}}
 networks:
   authentik:
     name: authentik

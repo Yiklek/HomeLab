@@ -1,8 +1,10 @@
 services:
   portainer:
-    image: portainer/portainer-ce:2.20.3
+    image: portainer/portainer-ce:latest
     command: --log-level=DEBUG
     restart: unless-stopped
+    environment:
+      AGENT_SECRET: ${PORTAINER_AGENT_SECRET}
     ports:
       - 8000:8000
     volumes:
@@ -18,3 +20,5 @@ services:
     networks:
       - traefik
       - authentik
+    dns:
+      - ${TRAEFIK_GATEWAY:-${DNS}}

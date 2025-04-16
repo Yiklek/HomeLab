@@ -10,7 +10,7 @@ services:
     environment:
       - USER_UID=1000
       - USER_GID=1000
-    restart: always
+    restart: unless-stopped
     networks:
       - gitea
       - traefik
@@ -22,8 +22,8 @@ services:
     ports:
       #- "3001:3000"
       - "222:22"
-    extra_hosts:
-      - auth.${DOMAIN}:${DOCKER0_IP:-172.17.0.1}
+    dns:
+      - ${DNS}
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.gitea.rule=Host(`gitea.${DOMAIN}`)"

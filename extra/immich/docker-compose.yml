@@ -29,11 +29,11 @@ services:
     env_file:
       - ${ENV_FILE:-}
     ports:
-      - 2283:3001
+      - 2283:2283
     depends_on:
       - redis
       - database
-    restart: always
+    restart: unless-stopped
     healthcheck:
       disable: false
     networks:
@@ -43,9 +43,9 @@ services:
       - "traefik.enable=true"
       - "traefik.http.routers.immich.rule=Host(`immich.${DOMAIN}`)"
       - "traefik.http.routers.immich.service=immich"
-      - "traefik.http.services.immich.loadbalancer.server.port=3001"
-    extra_hosts:
-      - auth.${DOMAIN}:${DOCKER0_IP:-172.17.0.1}
+      - "traefik.http.services.immich.loadbalancer.server.port=2283"
+    dns:
+      - ${DNS}
   immich-machine-learning:
     container_name: immich_machine_learning
     # For hardware acceleration, add one of -[armnn, cuda, openvino] to the image tag.
@@ -58,17 +58,17 @@ services:
       - ${IMMICH_MODEL_CACHE_LOCATION}:/cache
     env_file:
       - ${ENV_FILE:-}
-    restart: always
+    restart: unless-stopped
     healthcheck:
       disable: false
     networks:
       - immich
   redis:
     container_name: immich_redis
-    image: docker.io/redis:6.2-alpine@sha256:e3b17ba9479deec4b7d1eeec1548a253acc5374d68d3b27937fcfe4df8d18c7e
+    image: docker.io/redis:6.2-alpine@sha256:2ba50e1ac3a0ea17b736ce9db2b0a9f6f8b85d4c27d5f5accc6a416d8f42c6d5
     healthcheck:
       test: redis-cli ping || exit 1
-    restart: always
+    restart: unless-stopped
     networks:
       - immich
   database:
@@ -88,6 +88,6 @@ services:
       start_interval: 30s
       start_period: 5m
     command: ["postgres", "-c", "shared_preload_libraries=vectors.so", "-c", 'search_path="$$user", public, vectors', "-c", "logging_collector=on", "-c", "max_wal_size=2GB", "-c", "shared_buffers=512MB", "-c", "wal_compression=on"]
-    restart: always
+    restart: unless-stopped
     networks:
       - immich
