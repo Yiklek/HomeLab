@@ -1,7 +1,7 @@
 services:
   traefik:
     # The official v3 Traefik docker image
-    image: traefik:v3.1
+    image: traefik:latest
     restart: unless-stopped
     # Enables the web UI and tells Traefik to listen to docker
     command: --api.insecure=true --providers.docker.network=traefik --log.level=DEBUG

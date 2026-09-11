@@ -1,5 +1,60 @@
+# Environment files and local secrets
+.env
+.env.*
+!.env.example
+!example.env
+*.secret
+*.secrets
+secrets/
+
+# Runtime and persistent application data
+/data/
+
+# Certificates and private keys
 *.csr
 *.crt
 *.key
 *.pem
+*.p12
+*.pfx
 *.srl
+
+# Databases, caches, logs, and runtime state
+*.db
+*.sqlite
+*.sqlite3
+*.rdb
+*.cache
+*.log
+*.pid
+*.pid.lock
+*.lock
+
+# Archives and backups
+*.tar
+*.tar.gz
+*.tgz
+*.zip
+*.7z
+*.bak
+*.backup
+*~
+
+# Local Docker Compose overrides
+compose.override.yml
+compose.override.yaml
+docker-compose.override.yml
+docker-compose.override.yaml
+
+# Editor and operating-system files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Python tooling
+__pycache__/
+*.py[cod]
+.pytest_cache/

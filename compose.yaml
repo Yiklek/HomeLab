@@ -1,0 +1,6 @@
+include:
+  - ./default/traefik/compose.yaml
+  - ./default/authentik/compose.yaml
+  - ./default/adguard/compose.yaml
+  - ./default/portainer/compose.yaml
+  - ./extra/siyuan/compose.yaml

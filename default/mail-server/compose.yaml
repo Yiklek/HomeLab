@@ -1,0 +1,28 @@
+services:
+  mail:
+    image: stalwartlabs/mail-server
+    restart: unless-stopped
+    hostname: mail.${DOMAIN}
+    ports:
+      - 8288:8080
+      - 25:25
+      - 587:587
+      - 465:465
+      - 143:143
+      - 993:993
+      - 4190:4190
+      - 110:110
+      - 995:995
+    volumes:
+      - ${DATA_BASE}/mail-server:/opt/stalwart-mail
+    depends_on:
+      - traefik
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.mail.rule=Host(`mail.${DOMAIN}`)"
+      - "traefik.http.routers.mail.service=mail"
+      #- "traefik.http.routers.adguard.middlewares=domain-authentik,adguard-auth-header"
+      - "traefik.http.services.mail.loadbalancer.server.port=8080"
+      #- "traefik.http.middlewares.adguard-auth-header.headers.customrequestheaders.Authorization=${ADGUARD_AUTH:-}"
+    networks:
+      - traefik

@@ -1,0 +1,47 @@
+services:
+  siyuan:
+    image: b3log/siyuan
+    command: ['serve', '--workspace=/siyuan/workspace/', '--accessAuthCode=${SIYUAN_AUTH_CODE}']
+    ports:
+      - 6806:6806
+    volumes:
+      - ${DATA_BASE}/siyuan:/siyuan/workspace
+    restart: unless-stopped
+    environment:
+      - TZ=Asia/Shanghai    # 时区标识符列表见 https://en.wikipedia.org/wiki/List_of_tz_database_time_zones
+      - PUID=1000  # 自定义用户 ID
+      - PGID=1000  # 自定义组 ID
+      - SIYUAN_LANG=zh-CN       # 界面语言（与本文档一致）
+    networks:
+      - traefik
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.siyuan.rule=Host(`siyuan.${DOMAIN}`)"
+      - "traefik.http.routers.siyuan.service=siyuan"
+      - "traefik.http.services.siyuan.loadbalancer.server.port=6806"
+  siyuan-mcp:
+    image: node
+    depends_on:
+      - siyuan
+    ports:
+      - 36806:36806
+    volumes:
+      - ${DATA_BASE}/siyuan:/siyuan/workspace
+    working_dir: /siyuan/workspace/data/plugins/siyuan-plugins-mcp-sisyphus
+    command:
+      - node
+      - mcp-server.cjs
+      - --http
+    networks:
+      - traefik
+    environment:
+      SIYUAN_API_URL: http://siyuan:6806
+      SIYUAN_TOKEN: ${SIYUAN_AUTH_CODE}
+      SIYUAN_MCP_TOKEN: ${SIYUAN_AUTH_CODE}
+      SIYUAN_MCP_HOST: 0.0.0.0
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.siyuan-mcp.rule=Host(`siyuan-mcp.${DOMAIN}`)"
+      - "traefik.http.routers.siyuan-mcp.service=siyuan-mcp"
+      - "traefik.http.services.siyuan-mcp.loadbalancer.server.port=36806"
+

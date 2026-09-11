@@ -9,13 +9,13 @@
 - traefik
 - authentik
 - portainer
-- v2raya
+- MetaCubeXD Server
 
 启动：
 ```bash
 docker compose up -d
 ```
-> 需要配置.env
+> 每个服务目录提供 `example.env` 示例，根目录 `.env` 汇总所有变量。
 
 ## 额外服务
 
@@ -23,11 +23,14 @@ docker compose up -d
 - aria2
 - gitea
 - immich
+- jellyfin
+- vaultwarden
 - syncthing
+- oxidns
 
 启动：
 ```bash
-cd aria2
+cd extra/aria2
 docker compose up -d
 ```
-> 需要配置.env
+> 每个服务目录提供 `example.env` 示例，根目录 `.env` 汇总所有变量。
