@@ -5,3 +5,4 @@ include:
   - ./default/portainer/compose.yaml
   - ./extra/siyuan/compose.yaml
   - ./default/metacubex/compose.yaml
+  - ./default/mail-server/compose.yaml

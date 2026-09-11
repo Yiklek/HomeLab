@@ -1,28 +1,73 @@
 services:
   mail:
-    image: stalwartlabs/mail-server
+    # Pinned to the v0.16 minor series. `latest` would cross semver breaks.
+    # Note: the previous `stalwartlabs/mail-server` image and the
+    # /opt/stalwart-mail data path belong to the retired v0.9 layout.
+    image: stalwartlabs/stalwart:v0.16
+    container_name: mail-server
     restart: unless-stopped
     hostname: mail.${DOMAIN}
+    environment:
+      # Published base URL. The container is fronted by Traefik on 443, so
+      # discovery documents must not advertise the internal :8080 listener.
+      STALWART_PUBLIC_URL: https://mail.${DOMAIN}
+      # Fixed bootstrap administrator, so the temporary password never has to
+      # be scraped from the logs. Remove once a permanent admin exists.
+      STALWART_RECOVERY_ADMIN: ${MAIL_SERVER_ADMIN:?mail admin credential required}
+      TZ: Asia/Shanghai
+      # The admin/account WebUI bundle is fetched from GitHub on first start,
+      # and the container has no direct internet access. Route HTTPS through
+      # the mihomo proxy that shares the traefik network. Internal names stay
+      # direct.
+      HTTP_PROXY: http://metacubexd:7890
+      HTTPS_PROXY: http://metacubexd:7890
+      NO_PROXY: localhost,127.0.0.1,.lab.home
+      # The homelab CA is not in the image trust store, so outbound TLS
+      # to auth.lab.home would fail. Point OpenSSL at a bundle that
+      # carries the public roots plus Yiklek CA. Refresh after a system
+      # CA update or a CA rotation:
+      #   cat /etc/ssl/certs/ca-certificates.crt "CA/Yiklek CA.crt" \
+      #     | sudo install -o 2000 -g 2000 -m 644 /dev/stdin \
+      #         ${DATA_BASE}/mail-server/certs/ca-bundle.crt
+      SSL_CERT_FILE: /certs/ca-bundle.crt
     ports:
-      - 8288:8080
-      - 25:25
-      - 587:587
-      - 465:465
-      - 143:143
-      - 993:993
-      - 4190:4190
-      - 110:110
-      - 995:995
+      # Mail protocols for LAN clients.
+      - "25:25"      # SMTP
+      - "587:587"    # submission
+      - "465:465"    # SMTPS
+      - "143:143"    # IMAP
+      - "993:993"    # IMAPS
+      - "110:110"    # POP3
+      - "995:995"    # POP3S
+      - "4190:4190"  # ManageSieve
+      # Admin HTTP on the loopback, as a fallback when Authentik is unavailable:
+      #   ssh -L 8288:127.0.0.1:8288 yiklek@lab.home   # then http://localhost:8288/admin
+      # Host 443 stays with Traefik, so the image's own HTTPS listener is not
+      # published and the default https://127.0.0.1:443 healthcheck is unused.
+      - "127.0.0.1:8288:8080"
     volumes:
-      - ${DATA_BASE}/mail-server:/opt/stalwart-mail
-    depends_on:
-      - traefik
+      # The image runs as the unprivileged stalwart user (UID 2000), so these
+      # bind mounts must be owned by 2000:2000 on the host:
+      #   sudo chown -R 2000:2000 ${DATA_BASE}/mail-server
+      - ${DATA_BASE}/mail-server/etc:/etc/stalwart
+      - ${DATA_BASE}/mail-server/data:/var/lib/stalwart
+      # TLS material for IMAPS/SMTPS, referenced as /certs/mail.crt and
+      # /certs/mail.key. These are COPIES of Traefik's own certificate
+      # (SAN *.lab.home covers mail.lab.home), so both services present the
+      # same chain and clients trust one root. Re-sync after renewing it:
+      #   sudo install -o 2000 -g 2000 -m 644 \
+      #     ${DATA_BASE}/traefik/traefik.crt ${DATA_BASE}/mail-server/certs/mail.crt
+      #   sudo install -o 2000 -g 2000 -m 600 \
+      #     ${DATA_BASE}/traefik/traefik.key ${DATA_BASE}/mail-server/certs/mail.key
+      - ${DATA_BASE}/mail-server/certs:/certs:ro
     labels:
       - "traefik.enable=true"
+      # Admin UI is gated by Authentik like the other management surfaces.
+      # Client autodiscovery over HTTP is therefore not reachable; clients are
+      # expected to be configured against the mail ports directly.
       - "traefik.http.routers.mail.rule=Host(`mail.${DOMAIN}`)"
       - "traefik.http.routers.mail.service=mail"
-      #- "traefik.http.routers.adguard.middlewares=domain-authentik,adguard-auth-header"
+      - "traefik.http.routers.mail.middlewares=domain-authentik"
       - "traefik.http.services.mail.loadbalancer.server.port=8080"
-      #- "traefik.http.middlewares.adguard-auth-header.headers.customrequestheaders.Authorization=${ADGUARD_AUTH:-}"
     networks:
       - traefik
