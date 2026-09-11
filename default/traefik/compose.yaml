@@ -3,12 +3,20 @@ services:
     # The official v3 Traefik docker image
     image: traefik:latest
     restart: unless-stopped
-    # Enables the web UI and tells Traefik to listen to docker
-    command: --api.insecure=true --providers.docker.network=traefik --log.level=DEBUG
+    # The public dashboard is served through the internal API service and gated
+    # by Authentik; the unauthenticated API exists only on the loopback port below.
+    command: --providers.docker.network=traefik --log.level=DEBUG
     ports:
       # The HTTP port
       - "80:80"
       - "443:443"
+      # Break-glass path: the unauthenticated Traefik API/dashboard on the
+      # "traefik" entrypoint, published to the host loopback only, so it is
+      # reachable when Authentik or the routing itself is broken.
+      #   curl http://127.0.0.1:8080/api/rawdata
+      #   ssh -L 8080:127.0.0.1:8080 yiklek@lab.home   # then http://localhost:8080/dashboard/
+      # LAN clients cannot reach it: the binding is 127.0.0.1, not 0.0.0.0.
+      - "127.0.0.1:8080:8080"
     volumes:
       # So that Traefik can listen to the Docker events
       - ${DATA_BASE}/traefik:/etc/traefik
@@ -16,8 +24,8 @@ services:
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.traefik.rule=Host(`traefik.${DOMAIN}`)"
-      - "traefik.http.routers.traefik.service=traefik"
-      - "traefik.http.services.traefik.loadbalancer.server.port=8080"
+      - "traefik.http.routers.traefik.service=api@internal"
+      - "traefik.http.routers.traefik.middlewares=domain-authentik"
     networks:
       - traefik
 networks:

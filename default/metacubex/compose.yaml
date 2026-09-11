@@ -1,0 +1,76 @@
+services:
+  metacubexd:
+    container_name: metacubexd
+    image: ghcr.io/metacubex/metacubexd-server:latest
+    restart: unless-stopped
+    environment:
+      CONTROL_TOKEN: ${METACUBEXD_CONTROL_TOKEN:?MetaCubeXD control token required}
+      CLASH_SECRET: ${METACUBEXD_CLASH_SECRET:?Mihomo API secret required}
+      DEFAULT_BACKEND_URL: https://mihomo.${DOMAIN}/mihomo
+      CONTROL_PORT: "8080"
+      CLASH_API_PORT: "9090"
+      MIXED_PORT: "7890"
+      TZ: Asia/Shanghai
+      GH_PROXY: ${GH_PROXY:-https://gh-proxy.com/}
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -eu
+        base="$${GH_PROXY}https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/"
+        for file in country.mmdb geoip.dat geosite.dat; do
+          target="/data/$$file"
+          if [ -s "$$target" ]; then
+            echo "[geo-init] $$file already exists"
+            continue
+          fi
+          echo "[geo-init] downloading $$file"
+          tmp="$$target.tmp"
+          rm -f "$$tmp"
+          attempt=1
+          while ! wget -q -O "$$tmp" "$$base$$file"; do
+            rm -f "$$tmp"
+            if [ "$$attempt" -ge 3 ]; then
+              echo "[geo-init] failed to download $$file" >&2
+              exit 1
+            fi
+            attempt=$$((attempt + 1))
+            sleep 2
+          done
+          test -s "$$tmp"
+          mv "$$tmp" "$$target"
+          echo "[geo-init] $$file ready"
+        done
+        exec /sbin/tini -- /docker-entrypoint.sh
+    ports:
+      # Only the proxy port is published. The dashboard is reachable solely
+      # through Traefik, so Authentik cannot be bypassed on a direct port.
+      - "7890:7890"
+    volumes:
+      - ${DATA_BASE}/metacubexd-server:/data
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/api/control/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    labels:
+      - "traefik.enable=true"
+      # Web UI + control agent: browser-navigated, so Authentik forward auth fits.
+      - "traefik.http.routers.metacubex.rule=Host(`mihomo.${DOMAIN}`)"
+      - "traefik.http.routers.metacubex.service=metacubex"
+      - "traefik.http.routers.metacubex.middlewares=domain-authentik"
+      - "traefik.http.services.metacubex.loadbalancer.server.port=8080"
+      # Mihomo API on the same host as the UI, so the SPA stays same-origin and
+      # needs no CORS. The browser never learns the Clash secret: forward auth
+      # authenticates the session and Traefik then injects the bearer token, so
+      # the dashboard's silent reachability probe succeeds with no manual entry.
+      - "traefik.http.routers.metacubex-api.rule=Host(`mihomo.${DOMAIN}`) && PathPrefix(`/mihomo`)"
+      - "traefik.http.routers.metacubex-api.priority=100"
+      - "traefik.http.routers.metacubex-api.middlewares=domain-authentik,mihomo-api-auth,metacubex-api-strip"
+      - "traefik.http.routers.metacubex-api.service=mihomo"
+      - "traefik.http.middlewares.metacubex-api-strip.stripprefix.prefixes=/mihomo"
+      - "traefik.http.middlewares.mihomo-api-auth.headers.customrequestheaders.Authorization=Bearer ${METACUBEXD_CLASH_SECRET}"
+      - "traefik.http.services.mihomo.loadbalancer.server.port=9090"
+    networks:
+      - traefik
