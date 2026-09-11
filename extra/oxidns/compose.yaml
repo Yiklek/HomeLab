@@ -1,0 +1,38 @@
+services:
+  oxidns:
+    # Pinned on purpose: `latest` would silently upgrade DNS on recreate.
+    image: svenshi/oxidns:1.5.2
+    container_name: oxidns
+    restart: unless-stopped
+    ports:
+      # AdGuard Home owns host 53 and avahi owns 5353/udp, so publish on 5354.
+      # The container still listens on 53, per config.yaml.
+      - "5354:53/udp"
+      - "5354:53/tcp"
+      # Loopback fallback, usable if Traefik or the domain is unavailable:
+      #   ssh -L 9199:127.0.0.1:9199 yiklek@lab.home
+      - "127.0.0.1:9199:9199/tcp"
+    volumes:
+      # The image ships /etc/oxidns/webui, so mount only the config file.
+      # Mounting the whole directory would shadow the WebUI.
+      - ${OXIDNS_CONFIG_DIR}/config.yaml:/etc/oxidns/config.yaml:ro
+    labels:
+      - "traefik.enable=true"
+      # Exposed WITHOUT forward auth on purpose. The management API can change
+      # DNS behaviour for every client, so either add
+      # `domain-authentik` to the middlewares below, or enable api.http.auth
+      # in config.yaml, before letting untrusted clients reach this host.
+      - "traefik.http.routers.oxidns.rule=Host(`oxidns.${DOMAIN}`)"
+      - "traefik.http.routers.oxidns.service=oxidns"
+      - "traefik.http.services.oxidns.loadbalancer.server.port=9199"
+    networks:
+      - default
+      # Shares AdGuard's network so config.yaml can forward to `adguard:53`.
+      # Requests to the host's published 53 do not survive the container
+      # bridge, so the upstream has to be reached container-to-container.
+      - traefik
+
+networks:
+  traefik:
+    external: true
+    name: traefik

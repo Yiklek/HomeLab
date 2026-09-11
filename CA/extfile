@@ -1,0 +1,10 @@
+authorityKeyIdentifier=keyid,issuer
+basicConstraints=critical,CA:FALSE
+keyUsage=critical,digitalSignature,keyEncipherment
+extendedKeyUsage=serverAuth
+subjectKeyIdentifier=hash
+subjectAltName=@alt_names
+[alt_names]
+DNS.1=*.lab.home
+DNS.2=fnnas.lab.home
+DNS.3=*.fnnas.lab.home
