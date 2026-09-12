@@ -375,3 +375,41 @@ curl -sk https://auth.<domain>/application/o/mail/.well-known/openid-configurati
   | python3 -c 'import json,sys; print(json.load(sys.stdin)["scopes_supported"])'
 # 应包含 offline_access
 ```
+
+### 归档按钮没反应
+
+Bulwark 的归档动作会移动到 **role = `archive`** 的邮箱。Stalwart 建号时只创建
+`inbox / drafts / sent / junk / trash`，**不含 archive**，于是按钮点了没有任何反应。
+
+Bulwark 源码里的注释印证了这一点（曾是其 issue #578）：
+
+```js
+// #578: archiving with no archive folder used to return silently, leaving the
+// user with a shortcut/button that did nothing. The store must now report it.
+```
+
+补一个归档邮箱即可（管理员可代任意账号操作）：
+
+```bash
+curl -u "$MAIL_SERVER_ADMIN" -H 'Content-Type: application/json' \
+  -X POST http://127.0.0.1:8288/jmap/ --data-binary '{
+    "using":["urn:ietf:params:jmap:mail"],
+    "methodCalls":[["Mailbox/set",
+      {"accountId":"<账号id>","create":{"new":{"name":"Archive","role":"archive","isSubscribed":true}}},
+      "c1"]]}'
+```
+
+账号 id 取自 `x:Account/get`（JMAP 的 accountId 与 registry id 相同）。**每个账号都要单独建。**
+
+### 分组为什么会变成共享邮箱
+
+Stalwart 的 OIDC 目录配置了 `claimGroups: groups`，因此 Authentik 的每个组成员身份都会在
+Stalwart 侧生成一个 **Group 账号**（如 `admin@lab.home`、`gitadmin@lab.home`），
+并把用户加为其成员，组成员即可访问该账号的共享邮箱。
+
+这些 Group 账号的 role 是 `Default`（不是 Admin），所以它们**不带来 Stalwart 管理权限**；
+本账号的 Admin 角色来自 `MAIL_OIDC_ADMIN_ACCOUNTS`。
+
+若不想让 Authentik 的服务类分组变成共享邮箱，可把 `claimGroups` 改指向一个专用 claim
+（例如 `mail_groups`），只列出真正需要共享邮箱的组；直接删除 `claimGroups` 也会停止映射，
+但**已生成的 Group 账号不会自动消失**，需要另行销毁。
