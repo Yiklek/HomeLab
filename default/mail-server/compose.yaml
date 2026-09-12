@@ -11,8 +11,9 @@ services:
       # Published base URL. The container is fronted by Traefik on 443, so
       # discovery documents must not advertise the internal :8080 listener.
       STALWART_PUBLIC_URL: https://mail.${DOMAIN}
-      # Fixed bootstrap administrator, so the temporary password never has to
-      # be scraped from the logs. Remove once a permanent admin exists.
+      # Fixed recovery administrator, so the temporary password never has to
+      # be scraped from the logs. Keep a strong credential in the untracked
+      # root .env as an emergency login even after OIDC is enabled.
       STALWART_RECOVERY_ADMIN: ${MAIL_SERVER_ADMIN:?mail admin credential required}
       TZ: Asia/Shanghai
       # The admin/account WebUI bundle is fetched from GitHub on first start,

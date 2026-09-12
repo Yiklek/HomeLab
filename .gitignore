@@ -3,6 +3,8 @@
 .env.*
 !.env.example
 !example.env
+# Host-specific shell exports (for example TRAEFIK_GATEWAY)
+env.sh
 *.secret
 *.secrets
 secrets/

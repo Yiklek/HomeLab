@@ -10,6 +10,7 @@
 - authentik
 - portainer
 - MetaCubeXD Server
+- Stalwart Mail Server（内网邮件，参见 [`default/mail-server/README.md`](default/mail-server/README.md)）
 
 启动：
 ```bash
