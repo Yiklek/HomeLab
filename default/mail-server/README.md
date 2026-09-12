@@ -83,7 +83,32 @@ Authentik 的 Identification Stage 原生支持按 `attributes.upn` 匹配，因
 
 > 注意：Identification Stage 在收到 `login_hint` 且 `pretend_user_exists` 为真时会被跳过，
 > 直接进入密码阶段。跳过逻辑与该 Stage 支持的登录字段无关，因此启用 UPN 不会改变是否
-> 跳过，也不会影响 `passwordless_flow`（WebAuthn 无密码入口只在识别表单上提供）。
+> 跳过。被跳过的代价是无密码入口消失，见下一节。
+
+### 无密码登录入口
+
+`passwordless_url` 只由 Identification Stage 提供。由于 Stalwart WebUI 总会发送
+`login_hint`，而该 Stage 判定为“简单 Stage”，Authentik 会跳过表单直达密码页，于是无密码
+入口不可见。这与 UPN 无关，未启用 UPN 时同样如此；Portainer 等应用不发 `login_hint`，
+因此表单正常渲染。
+
+`MAIL_OIDC_IDENTIFICATION` 控制该行为：
+
+| 值 | 行为 |
+| --- | --- |
+| `auto`（默认） | 带 `login_hint` 时跳过表单，直达密码页；不显示无密码入口 |
+| `always` | 表单始终渲染，完整地址已预填，同时显示无密码入口 |
+
+`always` 的实现方式是给 Identification Stage 的绑定额外挂一个名为
+`stalwart-mail-identification-always` 的恒真 `ExpressionPolicy`，使 `can_skip` 为假。
+由于只有 Mail 会发送 `login_hint`，其他应用不受影响。改回 `auto` 会删除该绑定。
+
+启用 `always` 后登录流程为：预填完整地址 → 直接点击 Log in 走密码，或点击无密码入口
+使用 WebAuthn。
+
+> 如需密码与无密码显示在同一页（而不是先用户名后密码两步），需要把 Identification Stage
+> 配上 `password_stage` 组成组合式 Stage，例如仓库中已有的 `ldap-identification-stage`。
+> 该做法会影响所有共用 `default-authentication-flow` 的应用，脚本暂未自动化。
 
 ## Authentik OIDC
 

@@ -76,11 +76,16 @@ def main() -> int:
         for value in env.get("MAIL_OIDC_UPN_ACCOUNTS", "").split(",")
         if value.strip()
     ]
+    identification = env.get("MAIL_OIDC_IDENTIFICATION", "auto").strip().lower()
+    if identification not in {"auto", "always"}:
+        print("MAIL_OIDC_IDENTIFICATION must be 'auto' or 'always'", file=sys.stderr)
+        return 1
     payload = base64.b64encode(json.dumps({
         "client_id": client_id,
         "domain": domain,
         "desired": desired,
         "upn_users": upn_users,
+        "identification": identification,
         "dry_run": args.dry_run,
         "check": args.check,
     }).encode()).decode()
@@ -88,8 +93,11 @@ def main() -> int:
     code = f'''import base64, json, sys
 from authentik.core.models import User
 from authentik.flows.models import FlowStageBinding
+from authentik.policies.expression.models import ExpressionPolicy
+from authentik.policies.models import PolicyBinding
 from authentik.providers.oauth2.models import OAuth2Provider
 from authentik.stages.identification.models import IdentificationStage
+ALWAYS_POLICY="stalwart-mail-identification-always"
 cfg=json.loads(base64.b64decode("{payload}"))
 try:
     provider=OAuth2Provider.objects.get(client_id=cfg["client_id"])
@@ -116,9 +124,11 @@ else:
 # login_hint. Authentik's UPN identifier lets user@domain match an existing
 # username without replacing the user's personal email attribute.
 stages=[]
+stage_bindings=[]
 for binding in FlowStageBinding.objects.filter(target=provider.authentication_flow).order_by("order"):
     if isinstance(binding.stage, IdentificationStage):
         stages.append(binding.stage)
+        stage_bindings.append(binding)
 if cfg["upn_users"] and not stages:
     print("ERROR no IdentificationStage found in provider authentication flow", file=sys.stderr)
     raise SystemExit(1)
@@ -165,6 +175,28 @@ if not cfg["upn_users"]:
             changes.append(("user", user, attributes))
             print("PLAN  remove UPN "+owned+" from Authentik user "+user.username)
 
+# Stalwart always sends login_hint. Because the identification stage is a
+# "simple" stage, Authentik then skips it and jumps straight to the password
+# prompt, which also hides the passwordless entry point that lives on the
+# identification form. Attaching any policy makes can_skip false so the form is
+# rendered again (prefilled with the hint). Requests without login_hint, such
+# as Portainer, already render the form and are unaffected.
+always_policy=ExpressionPolicy.objects.filter(name=ALWAYS_POLICY).first()
+want_form=cfg["identification"]=="always"
+for binding in stage_bindings:
+    bound=(
+        always_policy is not None
+        and PolicyBinding.objects.filter(target=binding, policy=always_policy).exists()
+    )
+    if want_form and not bound:
+        changes.append(("bind_always", binding, None))
+        print("PLAN  render identification form for hinted logins ("+str(binding.pk)+")")
+    elif not want_form and bound:
+        changes.append(("unbind_always", binding, None))
+        print("PLAN  stop forcing identification form ("+str(binding.pk)+")")
+    else:
+        print("OK    identification form "+("forced" if want_form else "default behaviour"))
+
 if not changes:
     print("UNCHANGED Authentik OIDC integration")
     raise SystemExit(0)
@@ -182,6 +214,19 @@ for kind, obj, value in changes:
     elif kind == "user":
         obj.attributes=value
         obj.save(update_fields=["attributes"])
+    elif kind == "bind_always":
+        policy=ExpressionPolicy.objects.filter(name=ALWAYS_POLICY).first()
+        if policy is None:
+            policy=ExpressionPolicy.objects.create(name=ALWAYS_POLICY, expression="return True")
+        PolicyBinding.objects.get_or_create(
+            target=obj,
+            policy=policy,
+            defaults={{"order": 0, "enabled": True, "negate": False}},
+        )
+    elif kind == "unbind_always":
+        policy=ExpressionPolicy.objects.filter(name=ALWAYS_POLICY).first()
+        if policy is not None:
+            PolicyBinding.objects.filter(target=obj, policy=policy).delete()
 print("CHANGED Authentik OIDC integration")
 raise SystemExit(10)
 '''
