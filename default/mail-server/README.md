@@ -58,15 +58,32 @@ cd default/mail-server
   这样 discovery 才能按 `lab.home` 找到 OIDC Directory。账号还必须通过
   `MAIL_OIDC_ADMIN_ACCOUNTS` 显式获得 Stalwart Admin role。
 - `/account/login`：普通账号自助入口，同样必须输入完整邮件地址。
-- WebUI 会把完整邮件地址作为 `login_hint` 传给 Authentik。脚本将 Authentik 用户
-  `yiklek` 的 UPN 设置为 `yiklek@lab.home`，并启用 Identification Stage 的 UPN 匹配，
-  所以预填的完整地址现在可以直接登录，同时保留原 username 和个人 email claim。
+- WebUI 会把完整邮件地址作为 `login_hint` 传给 Authentik。若要在 Authentik 侧匹配该完整
+  地址，可启用下面的 UPN 登录标识；保留原 username 与个人 email claim 不变。
 - 在 Stalwart 页面只输入裸用户名 `yiklek` 时无法确定邮件域，会走本地密码认证；OIDC
   自动创建的账号没有本地密码，因此该路径不能登录。
 - 在 `/admin/login` 输入恢复账号 `admin`（不带域名）时，discovery 会转到 Stalwart
   自己的 `/login`，可使用 `MAIL_SERVER_ADMIN` 密码处理 OIDC 故障。
 - `/login`：Stalwart 自身 OAuth authorization server 的底层凭据页面，供从邮件客户端
   发起的授权流程使用，不是 WebUI 登录入口，也不会自动跳转外部 Authentik。
+
+### UPN 登录标识（可选）
+
+Stalwart 必须收到完整邮件地址，而 WebUI 会把它原样作为 `login_hint` 交给 Authentik。
+Authentik 的 Identification Stage 原生支持按 `attributes.upn` 匹配，因此可以用 UPN 让完整
+地址直接命中 Authentik 用户，同时不改动 username 与个人邮箱。
+
+- 支持多个账号：`MAIL_OIDC_UPN_ACCOUNTS` 为逗号分隔列表。
+- 不会自动添加：Authentik 没有自动派生 UPN 的机制。新增账号时需要把用户名加入列表并
+  重新运行 `deploy.sh`；尚未创建的账号只会输出 `WARN`，不会中断部署。
+- 值由脚本按 `<username>@<MAIL_DOMAIN>` 计算，因此更换邮件域只需修改 `MAIL_DOMAIN`
+  后重跑，已列出的账号会被覆盖为新域。
+- 清空该变量即可完全禁用：脚本会移除 Identification Stage 的 `upn` 字段，并删除
+  `upn` 等于 `<username>@<MAIL_DOMAIN>` 的属性，不会触碰其他自定义属性。
+
+> 注意：Identification Stage 在收到 `login_hint` 且 `pretend_user_exists` 为真时会被跳过，
+> 直接进入密码阶段。跳过逻辑与该 Stage 支持的登录字段无关，因此启用 UPN 不会改变是否
+> 跳过，也不会影响 `passwordless_flow`（WebAuthn 无密码入口只在识别表单上提供）。
 
 ## Authentik OIDC
 

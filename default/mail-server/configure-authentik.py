@@ -124,19 +124,26 @@ if cfg["upn_users"] and not stages:
     raise SystemExit(1)
 for stage in stages:
     fields=list(stage.user_fields or [])
-    if cfg["upn_users"] and "upn" not in fields:
-        fields.append("upn")
+    if cfg["upn_users"]:
+        if "upn" not in fields:
+            fields.append("upn")
+            changes.append(("stage", stage, fields))
+            print("PLAN  enable UPN matching on IdentificationStage "+str(stage.pk))
+        else:
+            print("OK    IdentificationStage UPN matching")
+    elif "upn" in fields:
+        fields=[f for f in fields if f != "upn"]
         changes.append(("stage", stage, fields))
-        print("PLAN  enable UPN matching on IdentificationStage "+str(stage.pk))
-    elif cfg["upn_users"]:
-        print("OK    IdentificationStage UPN matching")
+        print("PLAN  disable UPN matching on IdentificationStage "+str(stage.pk))
+    else:
+        print("OK    IdentificationStage UPN matching disabled")
 
 for username in cfg["upn_users"]:
     try:
         user=User.objects.get(username=username)
     except User.DoesNotExist:
-        print("ERROR Authentik user not found: "+username, file=sys.stderr)
-        raise SystemExit(1)
+        print("WARN  Authentik user does not exist yet, skipping UPN: "+username)
+        continue
     attributes=dict(user.attributes or {{}})
     upn=username+"@"+cfg["domain"]
     if attributes.get("upn") != upn:
@@ -145,6 +152,18 @@ for username in cfg["upn_users"]:
         print("PLAN  set UPN "+upn+" for Authentik user "+username)
     else:
         print("OK    Authentik UPN "+upn)
+
+# An empty list disables UPN login again. Only aliases owned by this
+# deployment (upn == username@MAIL_DOMAIN) are removed, so unrelated
+# attributes are never touched.
+if not cfg["upn_users"]:
+    for user in User.objects.all():
+        attributes=dict(user.attributes or {{}})
+        owned=user.username+"@"+cfg["domain"]
+        if attributes.get("upn") == owned:
+            attributes.pop("upn", None)
+            changes.append(("user", user, attributes))
+            print("PLAN  remove UPN "+owned+" from Authentik user "+user.username)
 
 if not changes:
     print("UNCHANGED Authentik OIDC integration")
