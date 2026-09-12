@@ -294,6 +294,22 @@ https://webmail\.lab\.home/[A-Za-z0-9-]+/auth/callback
    因此该服务显式使用 `dns: [192.168.3.1]`。DNS 慢会让 OIDC discovery 直接超时，日志却只显示
    `The operation was aborted due to timeout`，容易误判为证书问题。
 
+### 仅允许 SSO 登录
+
+本部署不需要密码登录，`compose.yaml` 中设置了：
+
+```yaml
+OAUTH_ONLY: "true"     # 隐藏用户名/密码表单，只留 SSO 按钮
+```
+
+如需连按钮也跳过、直接跳转 IdP，可再加 `AUTO_SSO_ENABLED: "true"`。
+
+注意 Webmail 的**管理后台**用的是独立密码（`ADMIN_PASSWORD`），与邮件账号登录无关；当前未设置，
+日志显示 `Admin dashboard disabled`。
+
+锁定风险很低：Webmail 只是客户端，邮件协议（IMAP/SMTP）与 Stalwart 自带 WebUI 都不受影响，
+改回 `OAUTH_ONLY: "false"` 即可恢复。
+
 ### Stalwart 侧必须开启宽松 CORS
 
 Bulwark 在**浏览器**里直接连 Stalwart 的 JMAP，而 Webmail 与邮件服务器是**不同源**，所以浏览器

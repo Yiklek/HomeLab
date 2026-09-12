@@ -102,6 +102,9 @@ services:
       # auth.<domain> resolves to a private address; Bulwark blocks that by
       # default as an SSRF guard.
       OAUTH_ALLOW_PRIVATE_ENDPOINTS: "true"
+      # Password login is not needed: this deployment is Authentik-only.
+      # Hides the username/password form and offers SSO alone.
+      OAUTH_ONLY: "true"
       # Encrypts stored credentials and per-account settings.
       SESSION_SECRET: ${WEBMAIL_SESSION_SECRET:?webmail session secret required}
       # The homelab CA is not in the image trust store, so TLS to
