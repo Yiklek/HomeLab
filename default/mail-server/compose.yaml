@@ -105,6 +105,12 @@ services:
       # Password login is not needed: this deployment is Authentik-only.
       # Hides the username/password form and offers SSO alone.
       OAUTH_ONLY: "true"
+      # Authentik issues a refresh token only when offline_access is requested,
+      # and only if the provider has that scope mapping assigned (managed by
+      # configure-authentik.py). Without both, every page reload looks expired.
+      OAUTH_EXTRA_SCOPES: offline_access
+      # Skip the login form entirely: go straight to Authentik.
+      AUTO_SSO_ENABLED: "true"
       # Encrypts stored credentials and per-account settings.
       SESSION_SECRET: ${WEBMAIL_SESSION_SECRET:?webmail session secret required}
       # The homelab CA is not in the image trust store, so TLS to

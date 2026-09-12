@@ -302,7 +302,7 @@ https://webmail\.lab\.home/[A-Za-z0-9-]+/auth/callback
 OAUTH_ONLY: "true"     # 隐藏用户名/密码表单，只留 SSO 按钮
 ```
 
-如需连按钮也跳过、直接跳转 IdP，可再加 `AUTO_SSO_ENABLED: "true"`。
+`AUTO_SSO_ENABLED: "true"` 连按钮也跳过，打开页面即直接跳转 IdP。
 
 注意 Webmail 的**管理后台**用的是独立密码（`ADMIN_PASSWORD`），与邮件账号登录无关；当前未设置，
 日志显示 `Admin dashboard disabled`。
@@ -343,4 +343,35 @@ access-control-allow-headers: Authorization, Content-Type, Accept, X-Requested-W
 docker run --rm --user 0:0 --network none --entrypoint /bin/sh \
   -v "$DATA_BASE/webmail:/target" ghcr.io/bulwarkmail/webmail:latest \
   -c "mkdir -p /target/ca && chown -R $(id -u nextjs 2>/dev/null || echo 1001):65533 /target"
+```
+
+### 刷新页面提示「会话已过期」
+
+原因：**Authentik 只在请求了 `offline_access` scope 时才签发 refresh token**
+（`authentik/providers/oauth2/views/token.py`）：
+
+```python
+if SCOPE_OFFLINE_ACCESS in self.params.authorization_code.scope:
+    ...
+    response["refresh_token"] = refresh_token.token
+```
+
+没有 refresh token，页面刷新就无法续期，只能重新登录。
+
+两个条件**缺一不可**：
+
+1. **Provider 必须分配 `offline_access` scope 映射** —— 由 `configure-authentik.py` 维护。
+2. **客户端必须请求它** —— `compose.yaml` 中 `OAUTH_EXTRA_SCOPES: offline_access`。
+
+> 这里有个非常隐蔽的坑：Authentik 对**未分配**的 scope 不会报错，而是静默取交集丢弃
+> （`authorize.py`：`self.scope = self.scope.intersection(default_scope_names)`）。
+> 所以只改客户端请求会**完全无效且没有任何错误提示**，只能靠 discovery 的
+> `scopes_supported` 是否包含 `offline_access` 来判断。
+
+验证方式：
+
+```bash
+curl -sk https://auth.<domain>/application/o/mail/.well-known/openid-configuration \
+  | python3 -c 'import json,sys; print(json.load(sys.stdin)["scopes_supported"])'
+# 应包含 offline_access
 ```

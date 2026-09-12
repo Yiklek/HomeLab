@@ -98,6 +98,8 @@ def main() -> int:
         "desired": desired,
         "upn_users": upn_users,
         "identification": identification,
+        "offline_access": env.get("WEBMAIL_OFFLINE_ACCESS", "true").strip().lower()
+        in {"1", "true", "yes", "on"},
         "dry_run": args.dry_run,
         "check": args.check,
     }).encode()).decode()
@@ -107,7 +109,7 @@ from authentik.core.models import User
 from authentik.flows.models import FlowStageBinding
 from authentik.policies.expression.models import ExpressionPolicy
 from authentik.policies.models import PolicyBinding
-from authentik.providers.oauth2.models import OAuth2Provider
+from authentik.providers.oauth2.models import OAuth2Provider, ScopeMapping
 from authentik.stages.identification.models import IdentificationStage
 ALWAYS_POLICY="stalwart-mail-identification-always"
 cfg=json.loads(base64.b64decode("{payload}"))
@@ -209,6 +211,21 @@ for binding in stage_bindings:
     else:
         print("OK    identification form "+("forced" if want_form else "default behaviour"))
 
+# Refresh tokens are only issued when the offline_access scope is requested AND
+# that scope is assigned to the provider. Authentik silently intersects away
+# any requested scope that is not configured, so asking for offline_access from
+# the client alone is not enough - without this mapping the webmail gets no
+# refresh token and reports the session as expired on every page reload.
+if cfg["offline_access"]:
+    offline=ScopeMapping.objects.filter(scope_name="offline_access").order_by("name").first()
+    if offline is None:
+        print("WARN  no offline_access scope mapping exists in this deployment")
+    elif provider.property_mappings.filter(pk=offline.pk).exists():
+        print("OK    offline_access scope mapping assigned")
+    else:
+        changes.append(("scopemapping", provider, offline))
+        print("PLAN  assign offline_access scope mapping to the provider")
+
 if not changes:
     print("UNCHANGED Authentik OIDC integration")
     raise SystemExit(0)
@@ -239,6 +256,8 @@ for kind, obj, value in changes:
         policy=ExpressionPolicy.objects.filter(name=ALWAYS_POLICY).first()
         if policy is not None:
             PolicyBinding.objects.filter(target=obj, policy=policy).delete()
+    elif kind == "scopemapping":
+        obj.property_mappings.add(value)
 print("CHANGED Authentik OIDC integration")
 raise SystemExit(10)
 '''
