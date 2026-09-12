@@ -63,12 +63,12 @@ services:
       - ${DATA_BASE}/mail-server/certs:/certs:ro
     labels:
       - "traefik.enable=true"
-      # Admin UI is gated by Authentik like the other management surfaces.
-      # Client autodiscovery over HTTP is therefore not reachable; clients are
-      # expected to be configured against the mail ports directly.
+      # Do not put Authentik forward-auth in front of the whole mail origin.
+      # Stalwart WebUI discovers Authentik through its OIDC directory, while
+      # JMAP, autoconfig and OAuth callbacks must remain directly reachable.
+      # Stalwart still enforces its own bearer-token/role authorization.
       - "traefik.http.routers.mail.rule=Host(`mail.${DOMAIN}`)"
       - "traefik.http.routers.mail.service=mail"
-      - "traefik.http.routers.mail.middlewares=domain-authentik"
       - "traefik.http.services.mail.loadbalancer.server.port=8080"
     networks:
       - traefik

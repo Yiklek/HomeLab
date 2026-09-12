@@ -1,0 +1,167 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+ROOT_DIR=$(cd -- "$SCRIPT_DIR/../.." && pwd)
+ENV_FILE=${ENV_FILE:-$ROOT_DIR/.env}
+DRY_RUN=0
+CHECK_ONLY=0
+
+usage() {
+  cat <<'EOF'
+Usage: ./deploy.sh [--dry-run|--check] [--env-file PATH]
+
+  --dry-run   Show filesystem, Authentik and Stalwart changes without applying.
+  --check     Exit non-zero when configuration drift is detected.
+EOF
+}
+
+while (($#)); do
+  case "$1" in
+    --dry-run) DRY_RUN=1 ;;
+    --check) CHECK_ONLY=1 ;;
+    --env-file) shift; ENV_FILE=${1:?missing path after --env-file} ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "Unknown argument: $1" >&2; usage >&2; exit 2 ;;
+  esac
+  shift
+done
+
+if ((DRY_RUN && CHECK_ONLY)); then
+  echo "--dry-run and --check are mutually exclusive" >&2
+  exit 2
+fi
+if [[ ! -f "$ENV_FILE" ]]; then
+  echo "Environment file not found: $ENV_FILE" >&2
+  exit 1
+fi
+
+set -a
+# shellcheck disable=SC1090
+source "$ENV_FILE"
+set +a
+
+: "${DOMAIN:?DOMAIN is required}"
+: "${DATA_BASE:?DATA_BASE is required}"
+: "${MAIL_SERVER_ADMIN:?MAIL_SERVER_ADMIN is required}"
+: "${MAIL_OIDC_CLIENT_ID:?MAIL_OIDC_CLIENT_ID is required}"
+
+MAIL_DATA_DIR=${MAIL_DATA_DIR:-$DATA_BASE/mail-server}
+MAIL_CERT_SOURCE=${MAIL_CERT_SOURCE:-$DATA_BASE/traefik/traefik.crt}
+MAIL_KEY_SOURCE=${MAIL_KEY_SOURCE:-$DATA_BASE/traefik/traefik.key}
+MAIL_CA_SOURCE=${MAIL_CA_SOURCE:-$ROOT_DIR/CA/Yiklek CA.crt}
+SYSTEM_CA_BUNDLE=${SYSTEM_CA_BUNDLE:-/etc/ssl/certs/ca-certificates.crt}
+COMPOSE_FILE=${COMPOSE_FILE:-$ROOT_DIR/compose.yaml}
+
+run_root() {
+  if [[ $(id -u) -eq 0 ]]; then "$@"; else sudo "$@"; fi
+}
+
+prepare_files() {
+  for path in "$MAIL_CERT_SOURCE" "$MAIL_KEY_SOURCE" "$MAIL_CA_SOURCE" "$SYSTEM_CA_BUNDLE"; do
+    [[ -f "$path" ]] || { echo "Required file not found: $path" >&2; return 1; }
+  done
+  if ((DRY_RUN)); then
+    echo "PLAN  create $MAIL_DATA_DIR/{etc,data,certs} owned by 2000:2000"
+    echo "PLAN  install mail certificate, key and CA bundle"
+    return
+  fi
+  if ((CHECK_ONLY)); then
+    # The bind-mount directories are intentionally owned by UID/GID 2000 and
+    # mode 0750, so the invoking host user may need sudo even for stat/cmp.
+    for path in "$MAIL_DATA_DIR/certs/mail.crt" "$MAIL_DATA_DIR/certs/mail.key" "$MAIL_DATA_DIR/certs/ca-bundle.crt"; do
+      run_root test -f "$path" || { echo "DRIFT missing $path" >&2; return 3; }
+    done
+    run_root cmp -s "$MAIL_CERT_SOURCE" "$MAIL_DATA_DIR/certs/mail.crt" || { echo "DRIFT mail.crt differs" >&2; return 3; }
+    run_root cmp -s "$MAIL_KEY_SOURCE" "$MAIL_DATA_DIR/certs/mail.key" || { echo "DRIFT mail.key differs" >&2; return 3; }
+    echo "OK    certificate files"
+    return
+  fi
+  run_root install -d -o 2000 -g 2000 -m 750 \
+    "$MAIL_DATA_DIR/etc" "$MAIL_DATA_DIR/data" "$MAIL_DATA_DIR/certs"
+  run_root install -o 2000 -g 2000 -m 644 "$MAIL_CERT_SOURCE" "$MAIL_DATA_DIR/certs/mail.crt"
+  run_root install -o 2000 -g 2000 -m 600 "$MAIL_KEY_SOURCE" "$MAIL_DATA_DIR/certs/mail.key"
+  cat "$SYSTEM_CA_BUNDLE" "$MAIL_CA_SOURCE" | run_root install -o 2000 -g 2000 -m 644 /dev/stdin "$MAIL_DATA_DIR/certs/ca-bundle.crt"
+}
+
+wait_jmap() {
+  local i
+  for i in $(seq 1 90); do
+    if curl --noproxy '*' --connect-timeout 2 --max-time 5 -fsS \
+      -u "$MAIL_SERVER_ADMIN" http://127.0.0.1:8288/jmap/session >/dev/null 2>&1; then
+      echo "OK    Stalwart JMAP ready (${i}s)"
+      return 0
+    fi
+    sleep 1
+  done
+  echo "Stalwart JMAP did not become ready" >&2
+  return 1
+}
+
+LAST_CHANGED=0
+run_step() {
+  set +e
+  "$@"
+  local status=$?
+  set -e
+  case "$status" in
+    0) LAST_CHANGED=0 ;;
+    10) LAST_CHANGED=1 ;;
+    *) exit "$status" ;;
+  esac
+}
+
+MODE_ARGS=()
+((DRY_RUN)) && MODE_ARGS+=(--dry-run)
+((CHECK_ONLY)) && MODE_ARGS+=(--check)
+
+prepare_files
+if ((DRY_RUN)); then
+  echo "PLAN  docker compose up -d mail"
+elif ((CHECK_ONLY)); then
+  wait_jmap
+else
+  docker compose -f "$COMPOSE_FILE" up -d mail
+  wait_jmap
+fi
+
+if ((CHECK_ONLY)); then
+  "$SCRIPT_DIR/configure-authentik.py" --env-file "$ENV_FILE" --check
+  "$SCRIPT_DIR/configure.py" bootstrap --env-file "$ENV_FILE" --check
+  "$SCRIPT_DIR/configure.py" apply --env-file "$ENV_FILE" --check
+  exit 0
+fi
+
+if ((DRY_RUN)); then
+  if ! curl --noproxy '*' --connect-timeout 2 --max-time 5 -fsS \
+    -u "$MAIL_SERVER_ADMIN" http://127.0.0.1:8288/jmap/session >/dev/null 2>&1; then
+    echo "SKIP  live Authentik/Stalwart reconciliation (JMAP is not running)"
+    echo "      Run --dry-run again after the first container start for an object-level plan."
+    exit 0
+  fi
+  "$SCRIPT_DIR/configure-authentik.py" --env-file "$ENV_FILE" --dry-run
+  "$SCRIPT_DIR/configure.py" bootstrap --env-file "$ENV_FILE" --dry-run
+  "$SCRIPT_DIR/configure.py" apply --env-file "$ENV_FILE" --dry-run
+  exit 0
+fi
+
+run_step "$SCRIPT_DIR/configure.py" bootstrap --env-file "$ENV_FILE"
+if ((LAST_CHANGED)); then
+  docker restart mail-server >/dev/null
+  wait_jmap
+fi
+
+changed=0
+run_step "$SCRIPT_DIR/configure-authentik.py" --env-file "$ENV_FILE"
+((LAST_CHANGED)) && changed=1
+run_step "$SCRIPT_DIR/configure.py" apply --env-file "$ENV_FILE"
+((LAST_CHANGED)) && changed=1
+if ((changed)); then
+  docker restart mail-server >/dev/null
+  wait_jmap
+fi
+
+"$SCRIPT_DIR/configure.py" apply --env-file "$ENV_FILE" --check
+"$SCRIPT_DIR/configure-authentik.py" --env-file "$ENV_FILE" --check
+
+echo "Mail server deployment and configuration are converged."
