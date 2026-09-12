@@ -21,4 +21,4 @@ services:
       - traefik
       - authentik
     dns:
-      - ${TRAEFIK_GATEWAY:-${DNS}}
+      - ${DNS:?set DNS in the root .env}

@@ -23,7 +23,7 @@ services:
       #- "3001:3000"
       - "222:22"
     dns:
-      - ${DNS}
+      - ${DNS:?set DNS in the root .env}
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.gitea.rule=Host(`gitea.${DOMAIN}`)"

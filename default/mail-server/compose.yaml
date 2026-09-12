@@ -133,7 +133,7 @@ services:
     # an explicit resolver. It must answer both the local mail domain and
     # external names.
     dns:
-      - ${MAIL_DNS_RESOLVER:?set MAIL_DNS_RESOLVER in the root .env}
+      - ${DNS:?set DNS in the root .env}
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:3000/api/health"]
       interval: 30s

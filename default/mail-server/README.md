@@ -291,8 +291,8 @@ https://webmail\.lab\.home/[A-Za-z0-9-]+/auth/callback
 
 2. **DNS 必须显式指定**：宿主 `/etc/resolv.conf` 首个 nameserver 是失效地址（每次查询多等约
    3 秒），且宿主发布的 AdGuard 53 端口在容器内因 hairpin NAT **不可达**（实测超时 26 秒）。
-   因此该服务显式使用 `MAIL_DNS_RESOLVER`（在根目录 `.env` 中设置，指向容器内可达、且能解析
-   本地邮件域与外部域名的解析器）。DNS 慢会让 OIDC discovery 直接超时，日志却只显示
+   因此所有需要显式 DNS 的容器统一使用根目录 `.env` 的 `DNS` 变量，指向容器内可达、且能同时
+   解析本地服务名与外部域名的解析器。DNS 慢会让 OIDC discovery 直接超时，日志却只显示
    `The operation was aborted due to timeout`，容易误判为证书问题。
 
 ### 仅允许 SSO 登录

@@ -45,7 +45,7 @@ services:
       - "traefik.http.routers.immich.service=immich"
       - "traefik.http.services.immich.loadbalancer.server.port=2283"
     dns:
-      - ${DNS}
+      - ${DNS:?set DNS in the root .env}
   immich-machine-learning:
     container_name: immich_machine_learning
     # For hardware acceleration, add one of -[armnn, cuda, openvino] to the image tag.
