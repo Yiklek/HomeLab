@@ -472,10 +472,15 @@ Authentik **只在 flow 内求值表达式**，而管理员建用户走的是 RE
 ./create-user.py alice --update                 # 已存在时更新而不是报错
 ./create-user.py alice --delete                 # 删除
 ./create-user.py alice --dry-run                # 只预览
+./create-user.py alice --domain example.org     # 指定域，覆盖 .env
+./create-user.py alice --no-upn                 # 不设置 upn（例如只用 Webmail）
 ```
 
-它会创建 Authentik 用户并把 `attributes.upn` 设为 `<username>@<MAIL_DOMAIN>`，
-域取自 `MAIL_OIDC_USERNAME_DOMAIN` / `MAIL_DOMAIN` / `DOMAIN`。
+它会创建 Authentik 用户并把 `attributes.upn` 设为 `<username>@<domain>`。域的取值优先级：
+
+```text
+--domain  >  MAIL_OIDC_USERNAME_DOMAIN  >  MAIL_DOMAIN  >  DOMAIN
+```
 Stalwart 侧无需操作，首次 OIDC 登录会自动建号。
 
 **`upn` 这个属性名不能改**。Authentik 识别阶段把它硬编码了

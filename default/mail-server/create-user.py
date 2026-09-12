@@ -127,6 +127,9 @@ def main() -> int:
                         help="leave attributes.upn unset")
     parser.add_argument("--update", action="store_true",
                         help="update the user instead of failing when it already exists")
+    parser.add_argument("--domain", default="",
+                        help="domain for the UPN; overrides MAIL_OIDC_USERNAME_DOMAIN/"
+                             "MAIL_DOMAIN/DOMAIN from the env file")
     parser.add_argument("--delete", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--env-file", default=None)
@@ -136,9 +139,15 @@ def main() -> int:
     env_file = Path(args.env_file) if args.env_file else script_dir.parent.parent / ".env"
     env = load_env(env_file)
 
-    domain = env.get("MAIL_OIDC_USERNAME_DOMAIN") or env.get("MAIL_DOMAIN") or env.get("DOMAIN", "")
-    if not domain:
-        print("MAIL_DOMAIN/DOMAIN is required to build the UPN", file=sys.stderr)
+    domain = (
+        args.domain.strip()
+        or env.get("MAIL_OIDC_USERNAME_DOMAIN")
+        or env.get("MAIL_DOMAIN")
+        or env.get("DOMAIN", "")
+    ).strip()
+    if not domain and not args.no_upn:
+        print("A domain is required to build the UPN: pass --domain or set "
+              "MAIL_DOMAIN in the env file (use --no-upn to skip it).", file=sys.stderr)
         return 1
 
     username = args.username.strip()
