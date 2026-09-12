@@ -385,6 +385,22 @@ def apply(api: Jmap, env: dict[str, str], dry_run: bool, check: bool) -> int:
         "WebUI OAuth client",
     )
 
+    # The webmail talks JMAP straight from the browser, and it is served from a
+    # different origin than this server, so the browser needs CORS permission.
+    # Without it the preflight succeeds but carries no Access-Control-Allow-Origin
+    # and the browser discards every reply, which surfaces as a generic login
+    # failure in the webmail rather than a server-side error here.
+    if env.get("WEBMAIL_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}:
+        http = api.get("Http", ["singleton"])
+        if not http:
+            raise RuntimeError("x:Http singleton is missing")
+        r.update(
+            "Http",
+            http[0],
+            {"usePermissiveCors": True},
+            "permissive CORS for the browser JMAP client",
+        )
+
     return r.finish()
 
 

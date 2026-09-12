@@ -294,6 +294,30 @@ https://webmail\.lab\.home/[A-Za-z0-9-]+/auth/callback
    因此该服务显式使用 `dns: [192.168.3.1]`。DNS 慢会让 OIDC discovery 直接超时，日志却只显示
    `The operation was aborted due to timeout`，容易误判为证书问题。
 
+### Stalwart 侧必须开启宽松 CORS
+
+Bulwark 在**浏览器**里直接连 Stalwart 的 JMAP，而 Webmail 与邮件服务器是**不同源**，所以浏览器
+需要 CORS 许可。Stalwart 默认关闭：
+
+```json
+{"usePermissiveCors": false}
+```
+
+此时预检会返回 `204` 但**不带** `Access-Control-Allow-Origin`，浏览器直接丢弃后续所有响应。
+症状很有误导性：Bulwark 只显示通用的「认证失败 / 无法完成身份验证」，服务端日志**完全干净**，
+Stalwart 也**不会**记录任何 JMAP 认证尝试——因为请求根本没被浏览器发出去。
+
+`configure.py` 会在启用 Webmail 时把它设为 `true`：
+
+```text
+access-control-allow-origin: *
+access-control-allow-headers: Authorization, Content-Type, Accept, X-Requested-With
+```
+
+> 安全提示：`*` 允许任意站点发起无凭据请求。JMAP 校验的是 Bearer 令牌而非 Cookie，
+> 因此攻击者仍需持有有效令牌；若不接受该权衡，可改用 Stalwart 的 `x:Http.responseHeaders`
+> 自行收窄为具体来源。
+
 ### 数据目录
 
 `${DATA_BASE}/webmail/{settings,admin,admin-state,telemetry,ca}`，属主必须是镜像内的
