@@ -38,7 +38,8 @@ cd default/mail-server
 
 脚本由三部分组成：
 
-- `deploy.sh`：准备 UID/GID 2000 的数据目录和证书，启动 Compose，安排重启与最终检查。
+- `deploy.sh`：通过一次性、无网络的 Stalwart Docker helper（容器内 UID 0）准备宿主机
+  UID/GID 2000 的数据目录和证书，再启动 Compose、安排重启与最终检查；不调用 `sudo`。
 - `configure.py`：通过 Stalwart JMAP API 幂等配置 bootstrap、证书、listeners、域、OIDC
   Directory、全局 Authentication 和 WebUI Application。
 - `configure-authentik.py`：在同一 Docker 主机上通过 Authentik Django ORM，为指定
@@ -51,9 +52,15 @@ cd default/mail-server
 
 ### `/admin/login` 与 `/login`
 
-- `/admin/login`：管理入口；输入 `yiklek@lab.home` 后跳转 Authentik。账号必须通过
+- `/admin/login`：管理入口；在 Stalwart 页面必须输入完整邮件地址 `yiklek@lab.home`，
+  这样 discovery 才能按 `lab.home` 找到 OIDC Directory。账号还必须通过
   `MAIL_OIDC_ADMIN_ACCOUNTS` 显式获得 Stalwart Admin role。
-- `/account/login`：普通账号自助入口；输入完整邮件地址后使用同一 OIDC 流程。
+- `/account/login`：普通账号自助入口，同样必须输入完整邮件地址。
+- WebUI 会把完整邮件地址作为 `login_hint` 传给 Authentik，但 Authentik 里的真实用户名仍是
+  `yiklek`。没有 Authentik 会话时，在 Authentik 页面将预填值改为 `yiklek` 后登录；已有
+  会话时通常会直接返回。两边标识不同是为了保留 Authentik 中的个人邮箱 claim。
+- 在 Stalwart 页面只输入裸用户名 `yiklek` 时无法确定邮件域，会走本地密码认证；OIDC
+  自动创建的账号没有本地密码，因此该路径不能登录。
 - 在 `/admin/login` 输入恢复账号 `admin`（不带域名）时，discovery 会转到 Stalwart
   自己的 `/login`，可使用 `MAIL_SERVER_ADMIN` 密码处理 OIDC 故障。
 - `/login`：Stalwart 自身 OAuth authorization server 的底层凭据页面，供从邮件客户端

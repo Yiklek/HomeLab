@@ -52,36 +52,61 @@ MAIL_KEY_SOURCE=${MAIL_KEY_SOURCE:-$DATA_BASE/traefik/traefik.key}
 MAIL_CA_SOURCE=${MAIL_CA_SOURCE:-$ROOT_DIR/CA/Yiklek CA.crt}
 SYSTEM_CA_BUNDLE=${SYSTEM_CA_BUNDLE:-/etc/ssl/certs/ca-certificates.crt}
 COMPOSE_FILE=${COMPOSE_FILE:-$ROOT_DIR/compose.yaml}
-
-run_root() {
-  if [[ $(id -u) -eq 0 ]]; then "$@"; else sudo "$@"; fi
-}
+MAIL_HELPER_IMAGE=${MAIL_HELPER_IMAGE:-stalwartlabs/stalwart:v0.16}
 
 prepare_files() {
   for path in "$MAIL_CERT_SOURCE" "$MAIL_KEY_SOURCE" "$MAIL_CA_SOURCE" "$SYSTEM_CA_BUNDLE"; do
     [[ -f "$path" ]] || { echo "Required file not found: $path" >&2; return 1; }
   done
   if ((DRY_RUN)); then
+    echo "PLAN  use Docker helper $MAIL_HELPER_IMAGE (UID 0 inside container only)"
     echo "PLAN  create $MAIL_DATA_DIR/{etc,data,certs} owned by 2000:2000"
     echo "PLAN  install mail certificate, key and CA bundle"
     return
   fi
+
+  docker image inspect "$MAIL_HELPER_IMAGE" >/dev/null 2>&1 || {
+    echo "Docker helper image is unavailable: $MAIL_HELPER_IMAGE" >&2
+    echo "Load/pull the mail image before running deploy.sh." >&2
+    return 1
+  }
+
   if ((CHECK_ONLY)); then
-    # The bind-mount directories are intentionally owned by UID/GID 2000 and
-    # mode 0750, so the invoking host user may need sudo even for stat/cmp.
-    for path in "$MAIL_DATA_DIR/certs/mail.crt" "$MAIL_DATA_DIR/certs/mail.key" "$MAIL_DATA_DIR/certs/ca-bundle.crt"; do
-      run_root test -f "$path" || { echo "DRIFT missing $path" >&2; return 3; }
-    done
-    run_root cmp -s "$MAIL_CERT_SOURCE" "$MAIL_DATA_DIR/certs/mail.crt" || { echo "DRIFT mail.crt differs" >&2; return 3; }
-    run_root cmp -s "$MAIL_KEY_SOURCE" "$MAIL_DATA_DIR/certs/mail.key" || { echo "DRIFT mail.key differs" >&2; return 3; }
+    [[ -d "$MAIL_DATA_DIR" ]] || { echo "DRIFT missing $MAIL_DATA_DIR" >&2; return 3; }
+    docker run --rm --network none --user 0:0 --entrypoint /bin/sh \
+      -v "$MAIL_DATA_DIR:/target:ro" \
+      -v "$MAIL_CERT_SOURCE:/source/mail.crt:ro" \
+      -v "$MAIL_KEY_SOURCE:/source/mail.key:ro" \
+      "$MAIL_HELPER_IMAGE" -c '
+        test -f /target/certs/mail.crt &&
+        test -f /target/certs/mail.key &&
+        test -f /target/certs/ca-bundle.crt &&
+        cmp -s /source/mail.crt /target/certs/mail.crt &&
+        cmp -s /source/mail.key /target/certs/mail.key
+      ' || { echo "DRIFT certificate files are missing or differ" >&2; return 3; }
     echo "OK    certificate files"
     return
   fi
-  run_root install -d -o 2000 -g 2000 -m 750 \
-    "$MAIL_DATA_DIR/etc" "$MAIL_DATA_DIR/data" "$MAIL_DATA_DIR/certs"
-  run_root install -o 2000 -g 2000 -m 644 "$MAIL_CERT_SOURCE" "$MAIL_DATA_DIR/certs/mail.crt"
-  run_root install -o 2000 -g 2000 -m 600 "$MAIL_KEY_SOURCE" "$MAIL_DATA_DIR/certs/mail.key"
-  cat "$SYSTEM_CA_BUNDLE" "$MAIL_CA_SOURCE" | run_root install -o 2000 -g 2000 -m 644 /dev/stdin "$MAIL_DATA_DIR/certs/ca-bundle.crt"
+
+  # Docker already has the privilege required to manage bind-mount ownership;
+  # avoid host privilege escalation and host-wide user/group changes.
+  docker run --rm --network none --user 0:0 --entrypoint /bin/sh \
+    -v "$MAIL_DATA_DIR:/target" \
+    -v "$MAIL_CERT_SOURCE:/source/mail.crt:ro" \
+    -v "$MAIL_KEY_SOURCE:/source/mail.key:ro" \
+    -v "$MAIL_CA_SOURCE:/source/local-ca.crt:ro" \
+    -v "$SYSTEM_CA_BUNDLE:/source/system-ca.crt:ro" \
+    "$MAIL_HELPER_IMAGE" -c '
+      set -eu
+      mkdir -p /target/etc /target/data /target/certs
+      cp /source/mail.crt /target/certs/mail.crt
+      cp /source/mail.key /target/certs/mail.key
+      cat /source/system-ca.crt /source/local-ca.crt > /target/certs/ca-bundle.crt
+      chown -R 2000:2000 /target/etc /target/data /target/certs
+      chmod 750 /target/etc /target/data /target/certs
+      chmod 644 /target/certs/mail.crt /target/certs/ca-bundle.crt
+      chmod 600 /target/certs/mail.key
+    '
 }
 
 wait_jmap() {
