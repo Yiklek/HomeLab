@@ -78,3 +78,63 @@ services:
       - "traefik.http.services.mail.loadbalancer.server.port=8080"
     networks:
       - traefik
+
+  webmail:
+    # Bulwark: self-hosted JMAP webmail for Stalwart (mail, calendar, contacts,
+    # files). Upstream image is multi-arch, so it runs natively on aarch64.
+    image: ghcr.io/bulwarkmail/webmail:latest
+    container_name: bulwark-webmail
+    restart: unless-stopped
+    hostname: webmail.${DOMAIN}
+    environment:
+      HOSTNAME: 0.0.0.0
+      PORT: 3000
+      TZ: Asia/Shanghai
+      # Stalwart serves JMAP on the same origin as its WebUI.
+      JMAP_SERVER_URL: https://mail.${DOMAIN}
+      APP_NAME: ${WEBMAIL_APP_NAME:-Webmail}
+      # OIDC via Authentik. Deliberately reuses the Mail provider: the token
+      # audience must equal the value in Stalwart's OIDC directory, so a
+      # separate client ID would be rejected by the mail server.
+      OAUTH_ENABLED: "true"
+      OAUTH_CLIENT_ID: ${MAIL_OIDC_CLIENT_ID}
+      OAUTH_ISSUER_URL: https://auth.${DOMAIN}/application/o/mail/
+      # auth.<domain> resolves to a private address; Bulwark blocks that by
+      # default as an SSRF guard.
+      OAUTH_ALLOW_PRIVATE_ENDPOINTS: "true"
+      # Encrypts stored credentials and per-account settings.
+      SESSION_SECRET: ${WEBMAIL_SESSION_SECRET:?webmail session secret required}
+      # The homelab CA is not in the image trust store, so TLS to
+      # auth.<domain> (OIDC discovery) and mail.<domain> (JMAP) fails with
+      # certificate errors. Node appends this file to its built-in roots.
+      NODE_EXTRA_CA_CERTS: /certs/yiklek-ca.crt
+    volumes:
+      # The image runs as UID 1001 (nextjs), so these bind mounts must be
+      # owned by 1001:1000 on the host. deploy.sh provisions them with a
+      # one-shot container, so no host sudo is required.
+      - ${DATA_BASE}/webmail/settings:/app/data/settings
+      - ${DATA_BASE}/webmail/admin:/app/data/admin
+      - ${DATA_BASE}/webmail/admin-state:/app/data/admin-state
+      - ${DATA_BASE}/webmail/telemetry:/app/data/telemetry
+      - ${DATA_BASE}/webmail/ca:/certs:ro
+    # Do not inherit the host resolv.conf: its first entry is a dead resolver
+    # (~3s per lookup) and the host-published AdGuard port is unreachable from
+    # inside Docker here (hairpin NAT). The router resolves *.lab.home and
+    # forwards everything else, so OIDC discovery and JMAP stay fast.
+    dns:
+      - 192.168.3.1
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:3000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    labels:
+      - "traefik.enable=true"
+      # Authentik forward auth is deliberately NOT used here: Bulwark performs
+      # its own OIDC login against Authentik and then talks JMAP to Stalwart.
+      - "traefik.http.routers.webmail.rule=Host(`webmail.${DOMAIN}`)"
+      - "traefik.http.routers.webmail.service=webmail"
+      - "traefik.http.services.webmail.loadbalancer.server.port=3000"
+    networks:
+      - traefik

@@ -260,3 +260,47 @@ OIDC 登录，因此**不建议迁移**。若需要浏览器收发邮件，更�
 3. **密码型客户端必须使用应用密码**。`lab.home` 绑定 OIDC 目录后，Basic 认证会先尝试
    应用密码（本地校验），否则转入目录校验；账号上的普通密码分支不会被执行。
 4. Windows 需导入 `CA/Yiklek CA.crt` 到「受信任的根证书颁发机构」，否则 TLS 校验失败。
+
+## Webmail（Bulwark，JMAP）
+
+`compose.yaml` 中的 `webmail` 服务提供浏览器收发邮件：
+
+```text
+https://webmail.lab.home
+```
+
+它通过 JMAP 直连 Stalwart（`JMAP_SERVER_URL=https://mail.${DOMAIN}`），与 Stalwart 共用同一套
+Authentik 身份。上游镜像 `ghcr.io/bulwarkmail/webmail` 为多架构，aarch64 原生可跑。
+
+### 为什么复用 Mail 的 OAuth Provider
+
+Stalwart 的 OIDC Directory 会校验令牌的 `aud`。若给 Webmail 单独建 Provider，令牌 `aud`
+就是新的 client_id，Stalwart 会拒绝。因此 Webmail 复用 `MAIL_OIDC_CLIENT_ID`，回调地址由
+`configure-authentik.py` 以 **regex** 形式登记（Bulwark 按语言生成 `<origin>/<locale>/auth/callback`）：
+
+```text
+https://webmail\.lab\.home/[A-Za-z0-9-]+/auth/callback
+```
+
+### 两个必须的容器级配置
+
+1. **信任内网 CA**：镜像内置根证书不含 `Yiklek CA`，否则访问 `auth.<domain>`（OIDC 发现）与
+   `mail.<domain>`（JMAP）都会 `certificate verify failed`。通过 `NODE_EXTRA_CA_CERTS` 指向
+   挂载进来的 `CA/Yiklek CA.crt` 副本解决。注意 `wget` 只认系统 CA 库，验证时要用
+   `node -e "fetch(...)"`，否则会误判。
+
+2. **DNS 必须显式指定**：宿主 `/etc/resolv.conf` 首个 nameserver 是失效地址（每次查询多等约
+   3 秒），且宿主发布的 AdGuard 53 端口在容器内因 hairpin NAT **不可达**（实测超时 26 秒）。
+   因此该服务显式使用 `dns: [192.168.3.1]`。DNS 慢会让 OIDC discovery 直接超时，日志却只显示
+   `The operation was aborted due to timeout`，容易误判为证书问题。
+
+### 数据目录
+
+`${DATA_BASE}/webmail/{settings,admin,admin-state,telemetry,ca}`，属主必须是镜像内的
+`nextjs`（实测 **1001:65533**）。宿主用户无法在其中建目录，需用一次性容器创建：
+
+```bash
+docker run --rm --user 0:0 --network none --entrypoint /bin/sh \
+  -v "$DATA_BASE/webmail:/target" ghcr.io/bulwarkmail/webmail:latest \
+  -c "mkdir -p /target/ca && chown -R $(id -u nextjs 2>/dev/null || echo 1001):65533 /target"
+```

@@ -71,6 +71,18 @@ def main() -> int:
             "redirect_uri_type": "authorization",
         },
     ]
+
+    # Bulwark webmail reuses this same provider so the access token it receives
+    # carries the exact audience Stalwart's OIDC directory requires. Bulwark
+    # builds one callback per locale (<origin>/<locale>/auth/callback), so a
+    # single regex covers every language instead of enumerating them.
+    webmail_host = env.get("WEBMAIL_HOSTNAME") or (f"webmail.{domain}" if domain else "")
+    if env.get("WEBMAIL_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"} and webmail_host:
+        desired.append({
+            "url": rf"https://{re.escape(webmail_host)}/[A-Za-z0-9-]+/auth/callback",
+            "matching_mode": "regex",
+            "redirect_uri_type": "authorization",
+        })
     upn_users = [
         value.strip()
         for value in env.get("MAIL_OIDC_UPN_ACCOUNTS", "").split(",")
