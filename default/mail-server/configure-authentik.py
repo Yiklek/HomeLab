@@ -40,9 +40,48 @@ def load_env(path: Path) -> dict[str, str]:
     return env
 
 
+def print_group_members(group: str, container: str) -> int:
+    """Print the usernames of an Authentik group so callers can drive config.
+
+    Stalwart derives permissions solely from an account's own role, so group
+    membership cannot grant admin by itself. Emitting the members here lets the
+    deploy script translate a group into per-account roles instead.
+    """
+    code = f'''import sys
+from authentik.core.models import Group
+g=Group.objects.filter(name={group!r}).first()
+if g is None:
+    print("WARN  Authentik group does not exist: " + {group!r}, file=sys.stderr)
+    raise SystemExit(0)
+for u in g.users.all().order_by("username"):
+    print("MEMBER:" + u.username)
+'''
+    proc = subprocess.run(
+        ["docker", "exec", container, "ak", "shell", "-c", code],
+        text=True,
+        capture_output=True,
+    )
+    # `ak shell` prints a banner and an "N objects imported" line, so only
+    # accept the explicitly tagged lines.
+    for line in proc.stdout.splitlines():
+        line = line.strip()
+        if line.startswith("MEMBER:"):
+            print(line[len("MEMBER:"):])
+    if proc.stderr:
+        for line in proc.stderr.splitlines():
+            if line.startswith("WARN"):
+                print(line, file=sys.stderr)
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--env-file", default=None)
+    parser.add_argument(
+        "--print-members",
+        metavar="GROUP",
+        help="Print the usernames of an Authentik group, one per line, then exit.",
+    )
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--dry-run", action="store_true")
     mode.add_argument("--check", action="store_true")
@@ -51,6 +90,12 @@ def main() -> int:
     script_dir = Path(__file__).resolve().parent
     env_file = Path(args.env_file) if args.env_file else script_dir.parent.parent / ".env"
     env = load_env(env_file)
+
+    if args.print_members:
+        return print_group_members(
+            args.print_members,
+            env.get("AUTHENTIK_SERVER_CONTAINER", "authentik-server"),
+        )
     domain = env.get("MAIL_DOMAIN") or env.get("DOMAIN", "")
     hostname = env.get("MAIL_HOSTNAME") or (f"mail.{domain}" if domain else "")
     client_id = env.get("MAIL_OIDC_CLIENT_ID", "")
@@ -98,11 +143,16 @@ def main() -> int:
     # evaluates every mapping whose scope_name was requested, so a second
     # mapping on the same scope name simply adds a parallel claim.
     group_prefix = env.get("MAIL_OIDC_GROUP_PREFIX", "mail-")
+    admin_group = env.get("MAIL_OIDC_ADMIN_GROUP", "").strip()
+    # The administrator group may itself start with the mail prefix; it must
+    # never become a shared mailbox, so it is excluded explicitly.
+    exclusion = f"        if group.name != {admin_group!r}\n" if admin_group else ""
     groups_expression = (
         "return {\n"
         '    "mail_groups": sorted(\n'
         "        group.name for group in request.user.groups.all()\n"
         f"        if group.name.lower().startswith({group_prefix!r})\n"
+        + exclusion +
         "    )\n"
         "}\n"
     )
@@ -114,6 +164,7 @@ def main() -> int:
         "upn_users": upn_users,
         "identification": identification,
         "groups_expression": groups_expression,
+        "admin_group": env.get("MAIL_OIDC_ADMIN_GROUP", "").strip(),
         "offline_access": env.get("WEBMAIL_OFFLINE_ACCESS", "true").strip().lower()
         in {"1", "true", "yes", "on"},
         "dry_run": args.dry_run,
@@ -121,7 +172,7 @@ def main() -> int:
     }).encode()).decode()
 
     code = f'''import base64, json, sys
-from authentik.core.models import User
+from authentik.core.models import Group, User
 from authentik.flows.models import FlowStageBinding
 from authentik.policies.expression.models import ExpressionPolicy
 from authentik.policies.models import PolicyBinding
@@ -228,6 +279,16 @@ for binding in stage_bindings:
     else:
         print("OK    identification form "+("forced" if want_form else "default behaviour"))
 
+# Make sure the group that drives Stalwart administrator roles exists, so
+# membership can be managed in the Authentik UI. An empty group simply yields
+# no promotions; configure.py never demotes, so this cannot lock anyone out.
+if cfg["admin_group"]:
+    if Group.objects.filter(name=cfg["admin_group"]).exists():
+        print("OK    Authentik administrator group "+cfg["admin_group"])
+    else:
+        changes.append(("group", None, cfg["admin_group"]))
+        print("PLAN  create Authentik administrator group "+cfg["admin_group"])
+
 # Dedicated group claim. The default `profile` mapping still emits `groups`
 # with every Authentik group; this parallel mapping adds `mail_groups` holding
 # only the groups that should become Stalwart shared mailboxes. Stalwart is
@@ -295,6 +356,8 @@ for kind, obj, value in changes:
         policy=ExpressionPolicy.objects.filter(name=ALWAYS_POLICY).first()
         if policy is not None:
             PolicyBinding.objects.filter(target=obj, policy=policy).delete()
+    elif kind == "group":
+        Group.objects.create(name=value)
     elif kind == "scopemapping":
         obj.property_mappings.add(value)
     elif kind == "groups_mapping":

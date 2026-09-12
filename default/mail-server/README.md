@@ -425,3 +425,37 @@ Stalwart 侧生成一个 **Group 账号**（如 `admin@lab.home`、`gitadmin@lab
 
 > 残留的 Group 账号（`admin@lab.home` 等）不会自动消失，需要单独销毁；
 > 它们本身是空的，删除无数据损失。
+
+### 用 Authentik 组控制 Stalwart 管理员
+
+**Stalwart 原生不支持「组 → 管理员」**。权限只来自账号自身的 `roles` 字段
+（`crates/common/src/auth/access_token.rs`）：
+
+```rust
+match &account.roles {
+    UserRoles::User  => default_role_ids_user,
+    UserRoles::Admin => default_role_ids_admin,      // tenant 存在则用 tenant 角色
+    UserRoles::Custom(custom_roles) => custom_roles.role_ids,
+}
+```
+
+组身份完全不参与权限计算。另外目录同步的**创建**路径会写死 `roles: UserRoles::User`，
+而**更新**路径只改 `password/description/aliases/member_group_ids`，**不碰 `roles`**，
+所以手工授予的 Admin 不会被登录覆盖。
+
+因此采用「组作为权威来源、脚本同步成账号角色」的方式：
+
+```dotenv
+MAIL_OIDC_ADMIN_GROUP=mail-admins
+```
+
+`deploy.sh` 会在每次收敛时读取该组并用 `configure-authentik.py --print-members` 取成员，
+导出为 `MAIL_OIDC_ADMIN_ACCOUNTS` 供 `configure.py` 使用。日常只需在 Authentik 界面里
+增减该组成员，然后重跑 `deploy.sh`。
+
+行为要点：
+
+- `configure.py` **只会提权、不会降权**，所以组成员为空时不会把现有管理员踢掉。
+- 相应地，**从组里移除成员不会自动降权**，需要手工把该账号 roles 改回 `User`。
+- 管理组名即使以 `mail-` 开头也不会变成共享邮箱——`mail_groups` 表达式显式排除了它。
+- 组不存在时脚本会创建它（便于在界面里加人），成员为空只提示 `WARN`，不影响其它配置。

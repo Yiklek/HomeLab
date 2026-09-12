@@ -123,6 +123,25 @@ wait_jmap() {
   return 1
 }
 
+# Stalwart resolves permissions from an account's own role, so group membership
+# cannot grant administrator rights by itself. Translate the Authentik group
+# into the explicit account list instead, which keeps the group as the single
+# place to manage who administers mail. configure.py only ever promotes, so an
+# empty group simply means "nobody gets promoted" rather than a lockout.
+resolve_admin_accounts() {
+  [[ -n "${MAIL_OIDC_ADMIN_GROUP:-}" ]] || return 0
+  local members
+  members=$("$SCRIPT_DIR/configure-authentik.py" --env-file "$ENV_FILE" \
+    --print-members "$MAIL_OIDC_ADMIN_GROUP" 2>/dev/null | tr '\n' ',' | sed 's/,$//')
+  if [[ -n "$members" ]]; then
+    export MAIL_OIDC_ADMIN_ACCOUNTS="$members"
+    echo "OK    Stalwart administrators from group $MAIL_OIDC_ADMIN_GROUP: $members"
+  else
+    export MAIL_OIDC_ADMIN_ACCOUNTS=""
+    echo "WARN  group $MAIL_OIDC_ADMIN_GROUP has no members; nothing will be promoted" >&2
+  fi
+}
+
 LAST_CHANGED=0
 run_step() {
   set +e
@@ -152,6 +171,7 @@ fi
 
 if ((CHECK_ONLY)); then
   "$SCRIPT_DIR/configure-authentik.py" --env-file "$ENV_FILE" --check
+  resolve_admin_accounts
   "$SCRIPT_DIR/configure.py" bootstrap --env-file "$ENV_FILE" --check
   "$SCRIPT_DIR/configure.py" apply --env-file "$ENV_FILE" --check
   exit 0
@@ -165,6 +185,7 @@ if ((DRY_RUN)); then
     exit 0
   fi
   "$SCRIPT_DIR/configure-authentik.py" --env-file "$ENV_FILE" --dry-run
+  resolve_admin_accounts
   "$SCRIPT_DIR/configure.py" bootstrap --env-file "$ENV_FILE" --dry-run
   "$SCRIPT_DIR/configure.py" apply --env-file "$ENV_FILE" --dry-run
   exit 0
@@ -179,6 +200,7 @@ fi
 changed=0
 run_step "$SCRIPT_DIR/configure-authentik.py" --env-file "$ENV_FILE"
 ((LAST_CHANGED)) && changed=1
+resolve_admin_accounts
 run_step "$SCRIPT_DIR/configure.py" apply --env-file "$ENV_FILE"
 ((LAST_CHANGED)) && changed=1
 if ((changed)); then
