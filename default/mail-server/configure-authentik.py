@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Configure Authentik redirect URIs for Stalwart WebUI on the same Docker host."""
+"""Configure Authentik callbacks and UPN aliases for Stalwart WebUI."""
 
 from __future__ import annotations
 
@@ -71,40 +71,99 @@ def main() -> int:
             "redirect_uri_type": "authorization",
         },
     ]
+    upn_users = [
+        value.strip()
+        for value in env.get("MAIL_OIDC_UPN_ACCOUNTS", "").split(",")
+        if value.strip()
+    ]
     payload = base64.b64encode(json.dumps({
         "client_id": client_id,
+        "domain": domain,
         "desired": desired,
+        "upn_users": upn_users,
         "dry_run": args.dry_run,
         "check": args.check,
     }).encode()).decode()
 
     code = f'''import base64, json, sys
+from authentik.core.models import User
+from authentik.flows.models import FlowStageBinding
 from authentik.providers.oauth2.models import OAuth2Provider
+from authentik.stages.identification.models import IdentificationStage
 cfg=json.loads(base64.b64decode("{payload}"))
 try:
     provider=OAuth2Provider.objects.get(client_id=cfg["client_id"])
 except OAuth2Provider.DoesNotExist:
     print("ERROR Authentik OAuth2 provider not found for client_id", file=sys.stderr)
     raise SystemExit(1)
+changes=[]
+
 current=list(provider._redirect_uris or [])
 # Keep valid custom callbacks but remove the bootstrap placeholder.
 kept=[item for item in current if item.get("url") != "https://127.0.0.1"]
 for item in cfg["desired"]:
     if item not in kept:
         kept.append(item)
-if kept == current:
-    print("UNCHANGED Authentik redirect URIs")
+if kept != current:
+    changes.append(("redirects", provider, kept))
+    print("PLAN  Authentik redirect URIs:")
+    for item in kept:
+        print("  "+item["url"])
+else:
+    print("OK    Authentik redirect URIs")
+
+# Stalwart needs a full address for OIDC discovery and passes that address as
+# login_hint. Authentik's UPN identifier lets user@domain match an existing
+# username without replacing the user's personal email attribute.
+stages=[]
+for binding in FlowStageBinding.objects.filter(target=provider.authentication_flow).order_by("order"):
+    if isinstance(binding.stage, IdentificationStage):
+        stages.append(binding.stage)
+if cfg["upn_users"] and not stages:
+    print("ERROR no IdentificationStage found in provider authentication flow", file=sys.stderr)
+    raise SystemExit(1)
+for stage in stages:
+    fields=list(stage.user_fields or [])
+    if cfg["upn_users"] and "upn" not in fields:
+        fields.append("upn")
+        changes.append(("stage", stage, fields))
+        print("PLAN  enable UPN matching on IdentificationStage "+str(stage.pk))
+    elif cfg["upn_users"]:
+        print("OK    IdentificationStage UPN matching")
+
+for username in cfg["upn_users"]:
+    try:
+        user=User.objects.get(username=username)
+    except User.DoesNotExist:
+        print("ERROR Authentik user not found: "+username, file=sys.stderr)
+        raise SystemExit(1)
+    attributes=dict(user.attributes or {{}})
+    upn=username+"@"+cfg["domain"]
+    if attributes.get("upn") != upn:
+        attributes["upn"]=upn
+        changes.append(("user", user, attributes))
+        print("PLAN  set UPN "+upn+" for Authentik user "+username)
+    else:
+        print("OK    Authentik UPN "+upn)
+
+if not changes:
+    print("UNCHANGED Authentik OIDC integration")
     raise SystemExit(0)
-print("PLAN  Authentik redirect URIs:")
-for item in kept:
-    print("  "+item["url"])
 if cfg["check"]:
     raise SystemExit(3)
 if cfg["dry_run"]:
     raise SystemExit(0)
-provider._redirect_uris=kept
-provider.save(update_fields=["_redirect_uris"])
-print("CHANGED Authentik redirect URIs")
+for kind, obj, value in changes:
+    if kind == "redirects":
+        obj._redirect_uris=value
+        obj.save(update_fields=["_redirect_uris"])
+    elif kind == "stage":
+        obj.user_fields=value
+        obj.save(update_fields=["user_fields"])
+    elif kind == "user":
+        obj.attributes=value
+        obj.save(update_fields=["attributes"])
+print("CHANGED Authentik OIDC integration")
 raise SystemExit(10)
 '''
     proc = subprocess.run(

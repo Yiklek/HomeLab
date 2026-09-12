@@ -21,6 +21,8 @@ DOMAIN=lab.home
 DATA_BASE=/home/yiklek/homelab/data
 MAIL_SERVER_ADMIN=admin:<强随机密码>
 MAIL_OIDC_CLIENT_ID=<Authentik Mail Provider client ID>
+# 让完整邮件地址作为 Authentik UPN 登录标识
+MAIL_OIDC_UPN_ACCOUNTS=yiklek
 # 可选：显式授予 Stalwart 管理员角色
 MAIL_OIDC_ADMIN_ACCOUNTS=yiklek
 ```
@@ -43,8 +45,8 @@ cd default/mail-server
 - `configure.py`：通过 Stalwart JMAP API 幂等配置 bootstrap、证书、listeners、域、OIDC
   Directory、全局 Authentication 和 WebUI Application。
 - `configure-authentik.py`：在同一 Docker 主机上通过 Authentik Django ORM，为指定
-  Provider 合并 `/admin/oauth/callback` 与 `/account/oauth/callback`；容器名可由
-  `AUTHENTIK_SERVER_CONTAINER` 覆盖。
+  Provider 合并 OAuth callbacks，并为 `MAIL_OIDC_UPN_ACCOUNTS` 配置 UPN 登录标识；
+  容器名可由 `AUTHENTIK_SERVER_CONTAINER` 覆盖。
 
 首次 bootstrap 生成的永久管理员凭据不会打印到日志，而是以 `0600` 权限写入
 `~/.config/homelab/mail-bootstrap-admin`（可用 `MAIL_BOOTSTRAP_SECRET_FILE` 覆盖）。
@@ -56,9 +58,9 @@ cd default/mail-server
   这样 discovery 才能按 `lab.home` 找到 OIDC Directory。账号还必须通过
   `MAIL_OIDC_ADMIN_ACCOUNTS` 显式获得 Stalwart Admin role。
 - `/account/login`：普通账号自助入口，同样必须输入完整邮件地址。
-- WebUI 会把完整邮件地址作为 `login_hint` 传给 Authentik，但 Authentik 里的真实用户名仍是
-  `yiklek`。没有 Authentik 会话时，在 Authentik 页面将预填值改为 `yiklek` 后登录；已有
-  会话时通常会直接返回。两边标识不同是为了保留 Authentik 中的个人邮箱 claim。
+- WebUI 会把完整邮件地址作为 `login_hint` 传给 Authentik。脚本将 Authentik 用户
+  `yiklek` 的 UPN 设置为 `yiklek@lab.home`，并启用 Identification Stage 的 UPN 匹配，
+  所以预填的完整地址现在可以直接登录，同时保留原 username 和个人 email claim。
 - 在 Stalwart 页面只输入裸用户名 `yiklek` 时无法确定邮件域，会走本地密码认证；OIDC
   自动创建的账号没有本地密码，因此该路径不能登录。
 - 在 `/admin/login` 输入恢复账号 `admin`（不带域名）时，discovery 会转到 Stalwart
