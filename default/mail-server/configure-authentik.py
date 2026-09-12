@@ -92,12 +92,28 @@ def main() -> int:
     if identification not in {"auto", "always"}:
         print("MAIL_OIDC_IDENTIFICATION must be 'auto' or 'always'", file=sys.stderr)
         return 1
+    # Only intentional mail groups should become Stalwart shared mailboxes;
+    # otherwise every Authentik group (admin, gitadmin, ...) turns into one.
+    # The default profile mapping already emits `groups`, and Authentik
+    # evaluates every mapping whose scope_name was requested, so a second
+    # mapping on the same scope name simply adds a parallel claim.
+    group_prefix = env.get("MAIL_OIDC_GROUP_PREFIX", "mail-")
+    groups_expression = (
+        "return {\n"
+        '    "mail_groups": sorted(\n'
+        "        group.name for group in request.user.groups.all()\n"
+        f"        if group.name.lower().startswith({group_prefix!r})\n"
+        "    )\n"
+        "}\n"
+    )
+
     payload = base64.b64encode(json.dumps({
         "client_id": client_id,
         "domain": domain,
         "desired": desired,
         "upn_users": upn_users,
         "identification": identification,
+        "groups_expression": groups_expression,
         "offline_access": env.get("WEBMAIL_OFFLINE_ACCESS", "true").strip().lower()
         in {"1", "true", "yes", "on"},
         "dry_run": args.dry_run,
@@ -112,6 +128,7 @@ from authentik.policies.models import PolicyBinding
 from authentik.providers.oauth2.models import OAuth2Provider, ScopeMapping
 from authentik.stages.identification.models import IdentificationStage
 ALWAYS_POLICY="stalwart-mail-identification-always"
+MAIL_GROUPS_MAPPING="stalwart-mail-groups"
 cfg=json.loads(base64.b64decode("{payload}"))
 try:
     provider=OAuth2Provider.objects.get(client_id=cfg["client_id"])
@@ -211,6 +228,28 @@ for binding in stage_bindings:
     else:
         print("OK    identification form "+("forced" if want_form else "default behaviour"))
 
+# Dedicated group claim. The default `profile` mapping still emits `groups`
+# with every Authentik group; this parallel mapping adds `mail_groups` holding
+# only the groups that should become Stalwart shared mailboxes. Stalwart is
+# pointed at `mail_groups` instead, so service groups like `admin` or
+# `gitadmin` no longer turn into mailboxes. Stalwart replaces (not merges) the
+# membership set on each login, so removing a group here also removes it there.
+groups_mapping=ScopeMapping.objects.filter(name=MAIL_GROUPS_MAPPING).first()
+if groups_mapping is None:
+    changes.append(("groups_mapping", provider, cfg["groups_expression"]))
+    print("PLAN  create the mail_groups scope mapping")
+else:
+    if (groups_mapping.expression or "").strip()!=cfg["groups_expression"].strip() or groups_mapping.scope_name!="profile":
+        changes.append(("groups_mapping_update", groups_mapping, cfg["groups_expression"]))
+        print("PLAN  update the mail_groups scope mapping")
+    else:
+        print("OK    mail_groups scope mapping")
+    if not provider.property_mappings.filter(pk=groups_mapping.pk).exists():
+        changes.append(("scopemapping", provider, groups_mapping))
+        print("PLAN  assign mail_groups scope mapping to the provider")
+    else:
+        print("OK    mail_groups scope mapping assigned")
+
 # Refresh tokens are only issued when the offline_access scope is requested AND
 # that scope is assigned to the provider. Authentik silently intersects away
 # any requested scope that is not configured, so asking for offline_access from
@@ -258,6 +297,19 @@ for kind, obj, value in changes:
             PolicyBinding.objects.filter(target=obj, policy=policy).delete()
     elif kind == "scopemapping":
         obj.property_mappings.add(value)
+    elif kind == "groups_mapping":
+        obj.property_mappings.add(
+            ScopeMapping.objects.create(
+                name=MAIL_GROUPS_MAPPING,
+                scope_name="profile",
+                expression=value,
+                description="Emits mail_groups: Authentik groups that become Stalwart shared mailboxes.",
+            )
+        )
+    elif kind == "groups_mapping_update":
+        obj.expression=value
+        obj.scope_name="profile"
+        obj.save(update_fields=["expression", "scope_name"])
 print("CHANGED Authentik OIDC integration")
 raise SystemExit(10)
 '''

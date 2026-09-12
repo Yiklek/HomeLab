@@ -410,6 +410,18 @@ Stalwart 侧生成一个 **Group 账号**（如 `admin@lab.home`、`gitadmin@lab
 这些 Group 账号的 role 是 `Default`（不是 Admin），所以它们**不带来 Stalwart 管理权限**；
 本账号的 Admin 角色来自 `MAIL_OIDC_ADMIN_ACCOUNTS`。
 
-若不想让 Authentik 的服务类分组变成共享邮箱，可把 `claimGroups` 改指向一个专用 claim
-（例如 `mail_groups`），只列出真正需要共享邮箱的组；直接删除 `claimGroups` 也会停止映射，
-但**已生成的 Group 账号不会自动消失**，需要另行销毁。
+**现已改为专用 claim**，`claimGroups` 指向 `mail_groups`：
+
+- `configure-authentik.py` 维护一个名为 `stalwart-mail-groups` 的 scope mapping，
+  `scope_name` 设为 **`profile`**。这与 Authentik 默认的 `profile` 映射**并行叠加**——
+  Authentik 会求值所有 `scope_name` 被请求到的映射，所以 `groups` 保留原样，另加一个
+  `mail_groups`。
+- 表达式只保留**名字以 `mail-` 开头**的组，前缀可用 `MAIL_OIDC_GROUP_PREFIX` 调整。
+  想让某个组变成共享邮箱，就把它命名为 `mail-<名称>`。
+
+这样 `admin`、`gitadmin` 这类服务分组不再生成邮箱。**Stalwart 的组成员是整体替换
+而非追加**（`crates/common/src/cache/directory.rs` 中 `member_group_ids = ...` 为赋值），
+所以用户**下次登录时**就会自动退出这些组，无需手工解绑。
+
+> 残留的 Group 账号（`admin@lab.home` 等）不会自动消失，需要单独销毁；
+> 它们本身是空的，删除无数据损失。

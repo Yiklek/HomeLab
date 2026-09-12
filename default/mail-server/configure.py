@@ -287,7 +287,11 @@ def apply(api: Jmap, env: dict[str, str], dry_run: bool, check: bool) -> int:
         "claimUsername": env.get("MAIL_OIDC_USERNAME_CLAIM", "preferred_username"),
         "usernameDomain": env.get("MAIL_OIDC_USERNAME_DOMAIN", domain),
         "claimName": env.get("MAIL_OIDC_NAME_CLAIM", "name"),
-        "claimGroups": env.get("MAIL_OIDC_GROUPS_CLAIM", "groups"),
+        # `mail_groups` is emitted by a dedicated Authentik scope mapping that
+        # only lists intentional mail groups; using the raw `groups` claim
+        # turned every Authentik group (admin, gitadmin, ...) into a shared
+        # mailbox because Stalwart creates a Group account per entry.
+        "claimGroups": env.get("MAIL_OIDC_GROUPS_CLAIM", "mail_groups"),
     }
     directories = api.get("Directory")
     directory = find_one(
