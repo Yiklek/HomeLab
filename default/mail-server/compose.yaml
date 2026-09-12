@@ -23,14 +23,12 @@ services:
       HTTP_PROXY: http://metacubexd:7890
       HTTPS_PROXY: http://metacubexd:7890
       NO_PROXY: localhost,127.0.0.1,.lab.home
-      # The homelab CA is not in the image trust store, so outbound TLS
-      # to auth.lab.home would fail. Point OpenSSL at a bundle that
-      # carries the public roots plus Yiklek CA. Refresh after a system
-      # CA update or a CA rotation:
-      #   cat /etc/ssl/certs/ca-certificates.crt "CA/Yiklek CA.crt" \
-      #     | sudo install -o 2000 -g 2000 -m 644 /dev/stdin \
-      #         ${DATA_BASE}/mail-server/certs/ca-bundle.crt
-      SSL_CERT_FILE: /certs/ca-bundle.crt
+      # The homelab CA is not in the image trust store, so outbound TLS to
+      # auth.<domain> would fail. Every container that must verify it mounts
+      # the same shared bundle, built by CA/build-bundle.sh (which deploy.sh
+      # runs). SSL_CERT_FILE replaces the default store, hence the bundle also
+      # carries the public roots.
+      SSL_CERT_FILE: /ca/ca-bundle.crt
     ports:
       # Mail protocols for LAN clients.
       - "25:25"      # SMTP
@@ -61,6 +59,7 @@ services:
       #   sudo install -o 2000 -g 2000 -m 600 \
       #     ${DATA_BASE}/traefik/traefik.key ${DATA_BASE}/mail-server/certs/mail.key
       - ${DATA_BASE}/mail-server/certs:/certs:ro
+      - ${DATA_BASE}/ca:/ca:ro
     labels:
       - "traefik.enable=true"
       # Do not put Authentik forward-auth in front of the whole mail origin.
@@ -113,10 +112,10 @@ services:
       AUTO_SSO_ENABLED: "true"
       # Encrypts stored credentials and per-account settings.
       SESSION_SECRET: ${WEBMAIL_SESSION_SECRET:?webmail session secret required}
-      # The homelab CA is not in the image trust store, so TLS to
-      # auth.<domain> (OIDC discovery) and mail.<domain> (JMAP) fails with
-      # certificate errors. Node appends this file to its built-in roots.
-      NODE_EXTRA_CA_CERTS: /certs/yiklek-ca.crt
+      # TLS to auth.<domain> (OIDC discovery) and mail.<domain> (JMAP) needs
+      # the homelab CA. Same shared bundle as the mail server; Node appends it
+      # to its built-in roots instead of replacing them.
+      NODE_EXTRA_CA_CERTS: /ca/ca-bundle.crt
     volumes:
       # The image runs as UID 1001 (nextjs), so these bind mounts must be
       # owned by 1001:1000 on the host. deploy.sh provisions them with a
@@ -125,7 +124,7 @@ services:
       - ${DATA_BASE}/webmail/admin:/app/data/admin
       - ${DATA_BASE}/webmail/admin-state:/app/data/admin-state
       - ${DATA_BASE}/webmail/telemetry:/app/data/telemetry
-      - ${DATA_BASE}/webmail/ca:/certs:ro
+      - ${DATA_BASE}/ca:/ca:ro
     # Do not inherit the host resolv.conf: its first entry may be an
     # unreachable resolver (~3s per lookup) and a host-published DNS port is
     # not necessarily reachable from inside Docker (hairpin NAT). OIDC

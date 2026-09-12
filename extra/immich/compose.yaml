@@ -22,10 +22,11 @@ services:
     volumes:
       # Do not edit the next line. If you want to change the media storage location on your system, edit the value of UPLOAD_LOCATION in the .env file
       - ${IMMICH_UPLOAD_LOCATION}:/usr/src/app/upload
-      - ${IMMICH_TRUST_EXTRA_CA_PATH}:/ca.crt
+      - ${DATA_BASE}/ca:/ca:ro
       - /etc/localtime:/etc/localtime:ro
     environment:
-      NODE_EXTRA_CA_CERTS: /ca.crt
+      # Shared homelab trust bundle; see CA/build-bundle.sh.
+      NODE_EXTRA_CA_CERTS: /ca/ca-bundle.crt
     env_file:
       - ${ENV_FILE:-}
     ports:

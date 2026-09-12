@@ -10,6 +10,9 @@ services:
     environment:
       - USER_UID=1000
       - USER_GID=1000
+      # Go reads SSL_CERT_FILE; the shared bundle carries the system roots
+      # plus Yiklek CA, so the host's /etc/ssl/certs mount is no longer needed.
+      - SSL_CERT_FILE=/ca/ca-bundle.crt
     restart: unless-stopped
     networks:
       - gitea
@@ -18,7 +21,7 @@ services:
       - ${GITEA_DATA}:/data
       - /etc/timezone:/etc/timezone:ro
       - /etc/localtime:/etc/localtime:ro
-      - /etc/ssl/certs:/etc/ssl/certs:ro
+      - ${DATA_BASE}/ca:/ca:ro
     ports:
       #- "3001:3000"
       - "222:22"

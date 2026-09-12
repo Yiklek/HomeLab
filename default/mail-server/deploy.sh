@@ -49,20 +49,28 @@ set +a
 MAIL_DATA_DIR=${MAIL_DATA_DIR:-$DATA_BASE/mail-server}
 MAIL_CERT_SOURCE=${MAIL_CERT_SOURCE:-$DATA_BASE/traefik/traefik.crt}
 MAIL_KEY_SOURCE=${MAIL_KEY_SOURCE:-$DATA_BASE/traefik/traefik.key}
-MAIL_CA_SOURCE=${MAIL_CA_SOURCE:-$ROOT_DIR/CA/Yiklek CA.crt}
-SYSTEM_CA_BUNDLE=${SYSTEM_CA_BUNDLE:-/etc/ssl/certs/ca-certificates.crt}
 COMPOSE_FILE=${COMPOSE_FILE:-$ROOT_DIR/compose.yaml}
 MAIL_HELPER_IMAGE=${MAIL_HELPER_IMAGE:-stalwartlabs/stalwart:v0.16}
 
 prepare_files() {
-  for path in "$MAIL_CERT_SOURCE" "$MAIL_KEY_SOURCE" "$MAIL_CA_SOURCE" "$SYSTEM_CA_BUNDLE"; do
+  for path in "$MAIL_CERT_SOURCE" "$MAIL_KEY_SOURCE"; do
     [[ -f "$path" ]] || { echo "Required file not found: $path" >&2; return 1; }
   done
   if ((DRY_RUN)); then
+    echo "PLAN  build the shared CA bundle via CA/build-bundle.sh"
     echo "PLAN  use Docker helper $MAIL_HELPER_IMAGE (UID 0 inside container only)"
     echo "PLAN  create $MAIL_DATA_DIR/{etc,data,certs} owned by 2000:2000"
-    echo "PLAN  install mail certificate, key and CA bundle"
+    echo "PLAN  install mail certificate and key"
     return
+  fi
+
+  # One shared trust bundle serves every container that has to verify the
+  # homelab CA; CA/build-bundle.sh explains why it also carries the system
+  # roots. Stalwart reads it through SSL_CERT_FILE.
+  if ((CHECK_ONLY)); then
+    "$ROOT_DIR/CA/build-bundle.sh" --env-file "$ENV_FILE" --check || return 3
+  else
+    "$ROOT_DIR/CA/build-bundle.sh" --env-file "$ENV_FILE"
   fi
 
   docker image inspect "$MAIL_HELPER_IMAGE" >/dev/null 2>&1 || {
@@ -80,7 +88,6 @@ prepare_files() {
       "$MAIL_HELPER_IMAGE" -c '
         test -f /target/certs/mail.crt &&
         test -f /target/certs/mail.key &&
-        test -f /target/certs/ca-bundle.crt &&
         cmp -s /source/mail.crt /target/certs/mail.crt &&
         cmp -s /source/mail.key /target/certs/mail.key
       ' || { echo "DRIFT certificate files are missing or differ" >&2; return 3; }
@@ -94,17 +101,15 @@ prepare_files() {
     -v "$MAIL_DATA_DIR:/target" \
     -v "$MAIL_CERT_SOURCE:/source/mail.crt:ro" \
     -v "$MAIL_KEY_SOURCE:/source/mail.key:ro" \
-    -v "$MAIL_CA_SOURCE:/source/local-ca.crt:ro" \
-    -v "$SYSTEM_CA_BUNDLE:/source/system-ca.crt:ro" \
     "$MAIL_HELPER_IMAGE" -c '
       set -eu
       mkdir -p /target/etc /target/data /target/certs
       cp /source/mail.crt /target/certs/mail.crt
       cp /source/mail.key /target/certs/mail.key
-      cat /source/system-ca.crt /source/local-ca.crt > /target/certs/ca-bundle.crt
+      rm -f /target/certs/ca-bundle.crt
       chown -R 2000:2000 /target/etc /target/data /target/certs
       chmod 750 /target/etc /target/data /target/certs
-      chmod 644 /target/certs/mail.crt /target/certs/ca-bundle.crt
+      chmod 644 /target/certs/mail.crt
       chmod 600 /target/certs/mail.key
     '
 }
@@ -157,11 +162,13 @@ run_step() {
 
 prepare_files
 if ((DRY_RUN)); then
-  echo "PLAN  docker compose up -d mail"
+  echo "PLAN  docker compose up -d mail webmail"
 elif ((CHECK_ONLY)); then
   wait_jmap
 else
-  docker compose -f "$COMPOSE_FILE" up -d mail
+  # Both services share the trust bundle this script builds, so bring them
+  # up together to keep the file present before the webmail starts.
+  docker compose -f "$COMPOSE_FILE" up -d mail webmail
   wait_jmap
 fi
 

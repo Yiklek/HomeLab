@@ -27,9 +27,9 @@ MAIL_OIDC_UPN_ACCOUNTS=yiklek
 MAIL_OIDC_ADMIN_GROUP=mail-admins
 ```
 
-默认从 `${DATA_BASE}/traefik/traefik.crt`、`${DATA_BASE}/traefik/traefik.key` 和
-`CA/Yiklek CA.crt` 构建 Stalwart 证书目录；可通过 `MAIL_CERT_SOURCE`、
-`MAIL_KEY_SOURCE`、`MAIL_CA_SOURCE` 覆盖。
+默认从 `${DATA_BASE}/traefik/traefik.crt` 与 `${DATA_BASE}/traefik/traefik.key` 安装
+Stalwart 的 TLS 证书；可通过 `MAIL_CERT_SOURCE`、`MAIL_KEY_SOURCE` 覆盖。
+与内网 CA 有关的**信任链**由 `CA/build-bundle.sh` 统一生成，见下文「信任内网 CA」。
 
 ```bash
 cd default/mail-server
@@ -284,10 +284,30 @@ https://webmail\.lab\.home/[A-Za-z0-9-]+/auth/callback
 
 ### 两个必须的容器级配置
 
-1. **信任内网 CA**：镜像内置根证书不含 `Yiklek CA`，否则访问 `auth.<domain>`（OIDC 发现）与
-   `mail.<domain>`（JMAP）都会 `certificate verify failed`。通过 `NODE_EXTRA_CA_CERTS` 指向
-   挂载进来的 `CA/Yiklek CA.crt` 副本解决。注意 `wget` 只认系统 CA 库，验证时要用
-   `node -e "fetch(...)"`，否则会误判。
+1. **信任内网 CA（统一为共享 bundle）**：镜像内置根证书不含 `Yiklek CA`，否则访问
+   `auth.<domain>`（OIDC 发现）与 `mail.<domain>`（JMAP）都会 `certificate verify failed`。
+
+   所有需要的容器现在都挂载**同一个** bundle 并指向**同一个**路径：
+
+   ```text
+   ${DATA_BASE}/ca/ca-bundle.crt        目录 0755、文件 0644（对任意 UID 可读）
+     ├─ mail-server      SSL_CERT_FILE=/ca/ca-bundle.crt        ← 替换语义，故需完整 bundle
+     ├─ webmail          NODE_EXTRA_CA_CERTS=/ca/ca-bundle.crt  ← 追加语义
+     ├─ immich           NODE_EXTRA_CA_CERTS=/ca/ca-bundle.crt
+     └─ gitea            SSL_CERT_FILE=/ca/ca-bundle.crt        ← Go 也读该变量
+   ```
+
+   由 `CA/build-bundle.sh` 生成（`deploy.sh` 会自动调用），支持 `--check`：
+
+   ```bash
+   ./CA/build-bundle.sh           # 生成/刷新（系统根 + Yiklek CA）
+   ./CA/build-bundle.sh --check   # 只校验，过期返回 3
+   ```
+
+   > 为什么必须带系统根：`SSL_CERT_FILE` 是**替换**默认信任库，只放内网 CA 会导致公网站点
+   > 也验不过；`NODE_EXTRA_CA_CERTS` 是**追加**，完整 bundle 同样适用。一个文件两者通用。
+   >
+   > 验证时注意 `wget` 只认系统 CA 库，要用 `node -e "fetch(...)"`，否则会误判。
 
 2. **DNS 必须显式指定**：宿主 `/etc/resolv.conf` 首个 nameserver 是失效地址（每次查询多等约
    3 秒），且宿主发布的 AdGuard 53 端口在容器内因 hairpin NAT **不可达**（实测超时 26 秒）。
