@@ -155,10 +155,6 @@ run_step() {
   esac
 }
 
-MODE_ARGS=()
-((DRY_RUN)) && MODE_ARGS+=(--dry-run)
-((CHECK_ONLY)) && MODE_ARGS+=(--check)
-
 prepare_files
 if ((DRY_RUN)); then
   echo "PLAN  docker compose up -d mail"

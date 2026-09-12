@@ -23,8 +23,8 @@ MAIL_SERVER_ADMIN=admin:<强随机密码>
 MAIL_OIDC_CLIENT_ID=<Authentik Mail Provider client ID>
 # 让完整邮件地址作为 Authentik UPN 登录标识
 MAIL_OIDC_UPN_ACCOUNTS=yiklek
-# 可选：显式授予 Stalwart 管理员角色
-MAIL_OIDC_ADMIN_ACCOUNTS=yiklek
+# Stalwart 管理员 = 这个 Authentik 组的成员
+MAIL_OIDC_ADMIN_GROUP=mail-admins
 ```
 
 默认从 `${DATA_BASE}/traefik/traefik.crt`、`${DATA_BASE}/traefik/traefik.key` 和
@@ -55,8 +55,8 @@ cd default/mail-server
 ### `/admin/login` 与 `/login`
 
 - `/admin/login`：管理入口；在 Stalwart 页面必须输入完整邮件地址 `yiklek@lab.home`，
-  这样 discovery 才能按 `lab.home` 找到 OIDC Directory。账号还必须通过
-  `MAIL_OIDC_ADMIN_ACCOUNTS` 显式获得 Stalwart Admin role。
+  这样 discovery 才能按 `lab.home` 找到 OIDC Directory。账号还必须属于
+  `MAIL_OIDC_ADMIN_GROUP`（默认 `mail-admins`）才会获得 Stalwart Admin role。
 - `/account/login`：普通账号自助入口，同样必须输入完整邮件地址。
 - WebUI 会把完整邮件地址作为 `login_hint` 传给 Authentik。若要在 Authentik 侧匹配该完整
   地址，可启用下面的 UPN 登录标识；保留原 username 与个人 email claim 不变。
@@ -141,8 +141,8 @@ HTML 的 `<meta name="oauth-client-id">`。Stalwart OIDC Directory 的关键字�
 第 2 项不可省略；否则 IMAP/SMTP 会记录
 `Failed to decode token ... configured as the default directory`。恢复管理员不受该设置影响。
 首次成功登录时，Stalwart 会按 `preferred_username + Username domain` 自动创建用户，
-并根据 `groups` claim 创建组。组 claim 不会自动授予 Stalwart 管理角色；脚本只会将
-`MAIL_OIDC_ADMIN_ACCOUNTS` 明确列出的现有 User 提升为 Admin。若用户尚未自动创建，先在
+并根据 `mail_groups` claim 创建组。组 claim 不会自动授予 Stalwart 管理角色；
+`deploy.sh` 会把 `MAIL_OIDC_ADMIN_GROUP` 的成员同步成账号角色。若用户尚未自动创建，先在
 `/account/login` 登录一次，再重新运行 `deploy.sh`。
 
 使用 `preferred_username` 而不是 `email`，可以让个人邮箱 claim（例如外部邮箱地址）
@@ -403,12 +403,12 @@ curl -u "$MAIL_SERVER_ADMIN" -H 'Content-Type: application/json' \
 
 ### 分组为什么会变成共享邮箱
 
-Stalwart 的 OIDC 目录配置了 `claimGroups: groups`，因此 Authentik 的每个组成员身份都会在
-Stalwart 侧生成一个 **Group 账号**（如 `admin@lab.home`、`gitadmin@lab.home`），
+Stalwart 的 OIDC 目录**原先**配置 `claimGroups: groups`，导致 Authentik 的每个组成员身份
+都会在 Stalwart 侧生成一个 **Group 账号**（如 `admin@lab.home`、`gitadmin@lab.home`），
 并把用户加为其成员，组成员即可访问该账号的共享邮箱。
 
 这些 Group 账号的 role 是 `Default`（不是 Admin），所以它们**不带来 Stalwart 管理权限**；
-本账号的 Admin 角色来自 `MAIL_OIDC_ADMIN_ACCOUNTS`。
+本账号的 Admin 角色来自 `MAIL_OIDC_ADMIN_GROUP` 的成员同步。
 
 **现已改为专用 claim**，`claimGroups` 指向 `mail_groups`：
 
