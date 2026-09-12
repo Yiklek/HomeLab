@@ -206,9 +206,20 @@ self.enterprise.as_ref().is_some_and(|e| !e.license.is_expired())
 ```
 
 许可证是一个 Ed25519 签名的二进制块，用内置公钥校验，并绑定基础域名、账号数量与有效期。
-**因此无法自行编译出「全功能」版本**：签名私钥在 Stalwart Labs 手中，源码中也明确禁止
-绕过该校验。需要企业功能时应走正规授权（官方说明：OpenCollective 每月 $5 赞助即获
-Enterprise 许可，$30 另含 Premium Support）。
+**因此无法自行编译出「全功能」版本**：签名私钥在 Stalwart Labs 手中。
+
+注意源码许可**并非统一**：多数文件是 `AGPL-3.0-only OR LicenseRef-SEL` 双许可，但企业版
+核心文件（如 `crates/common/src/enterprise/{mod,license}.rs`）仅为 `LicenseRef-SEL`，文件头
+明确写着「is NOT open source software」；双许可文件中还存在片段级 `LicenseRef-SEL` 标记。
+
+SELv2 相关条款（`LICENSES/LicenseRef-SEL.txt`）：
+
+- §3.2：运行本软件（**包括修改版本**）必须使用官方签发的 License Key，任何绕过尝试都属违约。
+- §4.1：允许为内部业务用途查看、复制、修改源码，且须遵守协议。
+- §4.3：**禁止改动、移除或以任何方式篡改 License Key 校验系统**，构成重大违约，可能引发法律行动。
+
+因此「改源码解锁企业功能」这条路是被明确禁止的，本项目不会提供相应做法。需要企业功能时应
+走正规授权（官方说明：OpenCollective 每月 $5 赞助即获 Enterprise 许可，$30 另含 Premium Support）。
 
 ### 社区版缺口（企业版专属）
 
