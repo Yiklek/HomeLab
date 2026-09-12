@@ -21,6 +21,7 @@ services:
       - "traefik.http.services.siyuan.loadbalancer.server.port=6806"
   siyuan-mcp:
     image: node
+    restart: unless-stopped
     depends_on:
       - siyuan
     ports:
