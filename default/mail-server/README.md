@@ -183,3 +183,49 @@ curl -X POST https://auth.${DOMAIN}/application/o/token/ \
 ```
 
 不要把 access token、client secret 或恢复管理员密码提交进仓库或日志。
+
+## 待办 / 已知问题
+
+- [ ] **无密码登录需要两次**：认证链接带有 `prompt=login`，而识别表单上的无密码入口会切换到
+  `passwordless-webauthn-flow`，导致当前 `default-authentication-flow` 计划被删除
+  （日志：`Found existing plan for other flow, deleting plan`），密钥验证成功后仍需再认证一轮。
+  计划方案：给 Identification Stage 设置 `webauthn_stage`（复用 `passwordless-auth-valid-stage`，
+  `device_classes=['webauthn']`、`not_configured_action=skip`），让密钥验证留在同一个 flow 内，
+  避免跨 flow 与二次认证。实现时需做成可回退开关，并用真实密钥实测。
+
+## 授权与版本（调研结论）
+
+Stalwart 采用双许可：**AGPL-3.0** 或 **SELv2（商业许可）**。`crates/main/Cargo.toml` 中
+`default = ["rocks", "enterprise"]`，官方 Docker 镜像同样带 `enterprise` 编译选项，
+所以**企业版代码已经存在于镜像中，只是由运行时签名密钥解锁**。
+
+`is_enterprise_edition()` 的实现是：
+
+```rust
+self.enterprise.as_ref().is_some_and(|e| !e.license.is_expired())
+```
+
+许可证是一个 Ed25519 签名的二进制块，用内置公钥校验，并绑定基础域名、账号数量与有效期。
+**因此无法自行编译出「全功能」版本**：签名私钥在 Stalwart Labs 手中，源码中也明确禁止
+绕过该校验。需要企业功能时应走正规授权（官方说明：OpenCollective 每月 $5 赞助即获
+Enterprise 许可，$30 另含 Premium Support）。
+
+### 社区版缺口（企业版专属）
+
+观测与告警（OpenTelemetry/Prometheus 指标、live tracing、指标告警与保留期）、WebUI
+自定义 logo、已删除邮件/账号恢复与保留期、SCIM v2、Masked Email、租户级磁盘配额、
+LLM 垃圾邮件过滤、日历与日程邮件模板。
+
+### 社区版已包含
+
+全部核心协议（SMTP/IMAP/POP3/JMAP/Sieve/CalDAV/CardDAV/WebDAV）、DKIM/DMARC/SPF/ARC、
+DANE/MTA-STS、统计式垃圾邮件分类器与规则/DNSBL/灰名单、**OIDC 与 OAuth2**、LDAP、
+2FA-TOTP、应用密码、角色与 ACL、多存储后端、全文检索、管理端与账号端 WebUI、
+客户端自动发现。当前部署未使用任何企业版功能。
+
+### 是否改用 mox
+
+mox（MIT，单一 Go 二进制，内置 Webmail）功能完整，但其路线图中 **OAuth2/SSO 仍标记为
+待实现**，同时尚未支持 JMAP、Sieve 与 POP3。改用 mox 会失去刚验证通过的 Authentik
+OIDC 登录，因此**不建议迁移**。若需要浏览器收发邮件，更合适的做法是在现有 Stalwart
+前面另加 Roundcube 或 SnappyMail，而不是更换邮件服务器。
