@@ -459,3 +459,35 @@ MAIL_OIDC_ADMIN_GROUP=mail-admins
 - 相应地，**从组里移除成员不会自动降权**，需要手工把该账号 roles 改回 `User`。
 - 管理组名即使以 `mail-` 开头也不会变成共享邮箱——`mail_groups` 表达式显式排除了它。
 - 组不存在时脚本会创建它（便于在界面里加人），成员为空只提示 `WARN`，不影响其它配置。
+
+### 创建用户（自动填好 upn）
+
+Authentik **只在 flow 内求值表达式**，而管理员建用户走的是 REST CRUD
+（`UserViewSet` 是 DRF `ModelViewSet`，即 `POST /api/v3/core/users/`），没有任何 flow，
+所以属性值无法自动计算，只能手填——容易漏。用本目录的脚本即可自动补上：
+
+```bash
+./create-user.py alice --email alice@example.com --name "Alice"
+./create-user.py alice --admin                  # 同时加入 mail-admins
+./create-user.py alice --update                 # 已存在时更新而不是报错
+./create-user.py alice --delete                 # 删除
+./create-user.py alice --dry-run                # 只预览
+```
+
+它会创建 Authentik 用户并把 `attributes.upn` 设为 `<username>@<MAIL_DOMAIN>`，
+域取自 `MAIL_OIDC_USERNAME_DOMAIN` / `MAIL_DOMAIN` / `DOMAIN`。
+Stalwart 侧无需操作，首次 OIDC 登录会自动建号。
+
+**`upn` 这个属性名不能改**。Authentik 识别阶段把它硬编码了
+（`stages/identification/stage.py`）：
+
+```python
+model_field = {
+    "email": "email",
+    "username": "username",
+    "upn": "attributes__upn",     # 只能叫 upn
+}[search_field]
+```
+
+登录页只提供 `email` / `username` / `upn` 三个匹配字段，`upn` 永远指向 `attributes.upn`，
+换成别的名字（如 `mailAddress`）不会生效。
