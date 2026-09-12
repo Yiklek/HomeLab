@@ -69,6 +69,12 @@ services:
       # Stalwart still enforces its own bearer-token/role authorization.
       - "traefik.http.routers.mail.rule=Host(`mail.${DOMAIN}`)"
       - "traefik.http.routers.mail.service=mail"
+      # Microsoft Autodiscover: Outlook probes autodiscover.<mail-domain>
+      # before anything else. Stalwart implements that endpoint (POST only),
+      # but without this route Traefik answers 404 and Outlook gives up with a
+      # "provider can no longer connect" style error.
+      - "traefik.http.routers.mail-autodiscover.rule=Host(`autodiscover.${DOMAIN}`)"
+      - "traefik.http.routers.mail-autodiscover.service=mail"
       - "traefik.http.services.mail.loadbalancer.server.port=8080"
     networks:
       - traefik

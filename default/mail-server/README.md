@@ -240,3 +240,23 @@ mox（MIT，单一 Go 二进制，内置 Webmail）功能完整，但其路线�
 待实现**，同时尚未支持 JMAP、Sieve 与 POP3。改用 mox 会失去刚验证通过的 Authentik
 OIDC 登录，因此**不建议迁移**。若需要浏览器收发邮件，更合适的做法是在现有 Stalwart
 前面另加 Roundcube 或 SnappyMail，而不是更换邮件服务器。
+
+## 客户端兼容性
+
+| 客户端 | 结果 | 原因 |
+| --- | --- | --- |
+| Outlook Classic（经典版） | ✅ | 本地直连 IMAP，使用 Autodiscover |
+| **新版 Outlook for Windows** | ❌ | 第三方账号经 Microsoft 云端中转，内网域名不可达 |
+| Thunderbird | ✅ | `/.well-known/autoconfig/mail/config-v1.1.xml` |
+
+要点：
+
+1. **新版 Outlook 无法连接自建内网邮件服务器**，这不是服务端配置问题。微软社区专员明确说明其
+   对第三方/企业内网邮箱支持有限，且需要经 Microsoft Cloud 中转。手动填写 IMAP 同样失败。
+   故障现象通常为「正在等待你的电子邮件提供商」或「你的电子邮件提供商无法再连接到 Outlook」。
+2. **Autodiscover 必须暴露 `autodiscover.${DOMAIN}`**。Outlook 首先探测该主机而不是
+   `mail.${DOMAIN}`；Compose 中对应的路由为 `mail-autodiscover`。端点仅接受 POST，
+   用 GET 探测会得到 404，容易误判为「不支持」。
+3. **密码型客户端必须使用应用密码**。`lab.home` 绑定 OIDC 目录后，Basic 认证会先尝试
+   应用密码（本地校验），否则转入目录校验；账号上的普通密码分支不会被执行。
+4. Windows 需导入 `CA/Yiklek CA.crt` 到「受信任的根证书颁发机构」，否则 TLS 校验失败。
