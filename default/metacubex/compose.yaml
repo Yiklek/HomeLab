@@ -3,6 +3,11 @@ services:
     container_name: metacubexd
     image: ghcr.io/metacubex/metacubexd-server:latest
     restart: unless-stopped
+    # Do not rely on the host resolv.conf here: its first nameserver is
+    # unreachable, which makes the profile/geo auto-update fail with
+    # "getaddrinfo EAI_AGAIN". Same setting as the other services.
+    dns:
+      - ${DNS:?set DNS in the root .env}
     environment:
       CONTROL_TOKEN: ${METACUBEXD_CONTROL_TOKEN:?MetaCubeXD control token required}
       CLASH_SECRET: ${METACUBEXD_CLASH_SECRET:?Mihomo API secret required}
@@ -49,7 +54,9 @@ services:
     volumes:
       - ${DATA_BASE}/metacubexd-server:/data
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/api/control/health"]
+      # 8080 is only the control agent; 9090 is the mihomo core itself.
+      # Without the second probe a dead core still reports healthy.
+      test: ["CMD-SHELL", 'wget -qO- http://127.0.0.1:8080/api/control/health >/dev/null && wget -qO- --header="Authorization: Bearer $$CLASH_SECRET" http://127.0.0.1:9090/version >/dev/null']
       interval: 30s
       timeout: 5s
       start_period: 10s
@@ -59,8 +66,34 @@ services:
       # Web UI + control agent: browser-navigated, so Authentik forward auth fits.
       - "traefik.http.routers.metacubex.rule=Host(`mihomo.${DOMAIN}`)"
       - "traefik.http.routers.metacubex.service=metacubex"
-      - "traefik.http.routers.metacubex.middlewares=domain-authentik"
+      - "traefik.http.routers.metacubex.middlewares=domain-authentik,metacubex-no-cache"
       - "traefik.http.services.metacubex.loadbalancer.server.port=8080"
+      # Force revalidation of the dashboard document. Without it the
+      # browser may serve the cached SPA without ever contacting the
+      # server, so the forward-auth cookie is never (re)established and
+      # the dashboard reports "backend unreachable" while its session is
+      # actually fine. `no-cache` still allows cheap 304 responses.
+      - "traefik.http.middlewares.metacubex-no-cache.headers.customresponseheaders.Cache-Control=no-cache"
+      # metacubexd is a PWA: its Workbox service worker precaches the app
+      # shell and answers navigations from that cache, so a normal open never
+      # reaches Traefik. Forward auth then never runs, the proxy cookie is
+      # never renewed, and the dashboard reports "backend unreachable" until a
+      # hard reload bypasses the worker.
+      #
+      # This router (higher priority than the UI router) answers /sw.js with
+      # an EMPTY script instead of the Workbox bundle. A worker still
+      # registers, but it has no fetch handler, so it never intercepts a
+      # navigation and every open is a real request again. Rejecting the file
+      # (404, or the SPA fallback's HTML) would work too, at the cost of a
+      # registration error in the console on every load.
+      - "traefik.http.routers.metacubex-sw.rule=Host(`mihomo.${DOMAIN}`) && Path(`/sw.js`)"
+      - "traefik.http.routers.metacubex-sw.priority=1000"
+      # noop@internal is Traefik's built-in 200-with-empty-body service.
+      - "traefik.http.routers.metacubex-sw.service=noop@internal"
+      - "traefik.http.routers.metacubex-sw.middlewares=metacubex-sw-empty"
+      # The empty body only registers as a worker when the MIME type is a
+      # JavaScript one; without this the browser refuses the script.
+      - "traefik.http.middlewares.metacubex-sw-empty.headers.customresponseheaders.Content-Type=application/javascript"
       # Mihomo API on the same host as the UI, so the SPA stays same-origin and
       # needs no CORS. The browser never learns the Clash secret: forward auth
       # authenticates the session and Traefik then injects the bearer token, so
